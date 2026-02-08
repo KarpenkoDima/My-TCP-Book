@@ -1,0 +1,88 @@
+# Auto detect text files and perform LF normalization
+* text=auto
+
+# Source code
+*.cs        text diff=csharp
+*.vb        text
+*.c         text diff=cpp
+*.cpp       text diff=cpp
+*.h         text diff=cpp
+*.hpp       text diff=cpp
+*.sql       text
+*.py        text diff=python
+*.js        text
+*.ts        text
+*.html      text diff=html
+*.css       text
+*.xml       text
+*.json      text
+*.md        text diff=markdown
+
+# Visual Studio solution and project files
+*.sln       text eol=crlf
+*.csproj    text eol=crlf
+*.vbproj    text eol=crlf
+*.vcxproj   text eol=crlf
+*.vcproj    text eol=crlf
+*.dbproj    text eol=crlf
+*.fsproj    text eol=crlf
+*.props     text eol=crlf
+*.targets   text eol=crlf
+*.ruleset   text eol=crlf
+*.config    text eol=crlf
+*.DotSettings text eol=crlf
+
+# Windows batch/cmd files must use CRLF
+*.cmd       text eol=crlf
+*.bat       text eol=crlf
+*.ps1       text eol=crlf
+
+# Shell scripts should use LF
+*.sh        text eol=lf
+
+# Serialization
+*.yaml      text
+*.yml       text
+
+# Documentation
+*.doc       diff=astextplain
+*.DOC       diff=astextplain
+*.docx      diff=astextplain
+*.pdf       diff=astextplain
+*.txt       text
+
+# Graphics (binary)
+*.png       binary
+*.jpg       binary
+*.jpeg      binary
+*.gif       binary
+*.ico       binary
+*.bmp       binary
+*.svg       text
+
+# Fonts (binary)
+*.ttf       binary
+*.eot       binary
+*.woff      binary
+*.woff2     binary
+
+# Archives (binary)
+*.zip       binary
+*.7z        binary
+*.gz        binary
+*.tar       binary
+*.rar       binary
+
+# Executables and libraries (binary)
+*.exe       binary
+*.dll       binary
+*.pdb       binary
+*.lib       binary
+*.so        binary
+
+# Compiled resources
+*.resources binary
+*.resx      text
+
+# Lock files
+packages.lock.json text eol=crlf
