@@ -1,10 +1,10 @@
-# Модуль 4: Internet Protocol — Анатомия сетевого уровня
+# Модуль 5: Internet Protocol — Анатомия сетевого уровня
 
 *«IP — это не просто адрес в заголовке. Это целая машина принятия решений, работающая на каждом роутере между вами и сервером».*
 
 ---
 
-## Часть 4.1: IP Header — 20 байт, которые правят интернетом
+## Часть 5.1: IP Header — 20 байт, которые правят интернетом
 
 Каждый слышал про IP-адреса. Но давайте разберём, что **на самом деле** происходит, когда ядро обрабатывает IP-пакет.
 
@@ -164,7 +164,7 @@ static inline int ip_decrease_ttl(struct iphdr *iph)
 
 ---
 
-## Часть 4.2: IP Checksum — Быстрая математика
+## Часть 5.2: IP Checksum — Быстрая математика
 
 ### Алгоритм: одна сумма дополнений
 
@@ -211,7 +211,7 @@ new_checksum = old_checksum - old_value + new_value
 
 ---
 
-## Часть 4.3: Фрагментация — Почему MTU 1500 не случайность
+## Часть 5.3: Фрагментация — Почему MTU 1500 не случайность
 
 ### Почему фрагментация — катастрофа
 
@@ -321,7 +321,7 @@ struct ipq {
 
 ---
 
-## Часть 4.4: Routing — Как ядро решает, куда слать пакет
+## Часть 5.4: Routing — Как ядро решает, куда слать пакет
 
 ### FIB: Forwarding Information Base
 
@@ -384,7 +384,7 @@ ip route add default via 192.168.1.1
 
 ---
 
-## Часть 4.5: IP Forwarding Path — Полный маршрут пакета
+## Часть 5.5: IP Forwarding Path — Полный маршрут пакета
 
 ### ASCII диаграмма
 
@@ -481,7 +481,7 @@ nft add rule ip raw prerouting notrack
 
 ---
 
-## Часть 4.6: IP Options — Редкие, но опасные
+## Часть 5.6: IP Options — Редкие, но опасные
 
 IP Options занимают байты между базовым 20-байтным заголовком и данными (до 40 байт).
 
@@ -505,7 +505,7 @@ sysctl -w net.ipv4.conf.all.accept_source_route=0
 
 ---
 
-## Часть 4.7: Multicast
+## Часть 5.7: Multicast
 
 ### Основы
 
@@ -546,7 +546,7 @@ static int ip_mr_input(struct sk_buff *skb)
 
 ---
 
-## Часть 4.8: IPsec Integration
+## Часть 5.8: IPsec Integration
 
 ### XFRM Framework
 
@@ -583,6 +583,257 @@ ethtool -k eth0 | grep esp
 ```
 
 Современные NIC (Intel E810, Mellanox ConnectX-6) поддерживают inline IPsec — шифрование/расшифровка происходит прямо на карте, без участия CPU.
+
+---
+
+## Часть 5.9: IPv6 — Не «будущее», а настоящее
+
+*В 2026 году IPv6 составляет более 45% мирового трафика (Google IPv6 Statistics). Для Senior-инженера незнание IPv6 — такой же пробел, как незнание TCP.*
+
+### IPv6 Header vs IPv4: Радикальное упрощение
+
+IPv4 заголовок — 20-60 байт (переменная длина из-за Options). IPv6 — **всегда 40 байт**, фиксированная длина:
+
+```c
+// include/uapi/linux/ipv6.h
+struct ipv6hdr {
+#if defined(__LITTLE_ENDIAN_BITFIELD)
+    __u8    priority:4,    // Traffic Class (верхние 4 бита)
+            version:4;     // Всегда 6
+#elif defined(__BIG_ENDIAN_BITFIELD)
+    __u8    version:4,
+            priority:4;
+#endif
+    __u8    flow_lbl[3];   // Flow Label (20 бит) — новинка IPv6
+    __be16  payload_len;   // Длина payload (без заголовка!)
+    __u8    nexthdr;       // Next Header (аналог protocol в IPv4)
+    __u8    hop_limit;     // Аналог TTL
+    struct in6_addr saddr; // 128 бит
+    struct in6_addr daddr; // 128 бит
+};
+```
+
+### Сравнение заголовков
+
+```
+IPv4 (20 байт минимум):              IPv6 (40 байт фиксировано):
+┌──────────────────────────┐         ┌──────────────────────────┐
+│ Ver│IHL│TOS │ Total Len  │         │ Ver│TC │   Flow Label    │
+├──────────────────────────┤         ├──────────────────────────┤
+│ Identification │Flg│Frag│         │ Payload Length│NextH│Hop │
+├──────────────────────────┤         ├──────────────────────────┤
+│ TTL │Proto│ Header Chksum│         │                          │
+├──────────────────────────┤         │   Source Address          │
+│     Source Address       │         │   (128 бит / 16 байт)   │
+├──────────────────────────┤         │                          │
+│   Destination Address    │         ├──────────────────────────┤
+├──────────────────────────┤         │                          │
+│   Options (0-40 байт)   │         │   Destination Address    │
+└──────────────────────────┘         │   (128 бит / 16 байт)   │
+                                     │                          │
+                                     └──────────────────────────┘
+```
+
+**Что убрали в IPv6:**
+
+| Поле IPv4 | Что произошло | Почему |
+|---|---|---|
+| IHL (Header Length) | Убрано | Заголовок фиксированный — длину знать не нужно |
+| Header Checksum | **Убрано** | L2 (Ethernet CRC) и L4 (TCP/UDP checksum) уже проверяют целостность. Двойная проверка — пустая трата CPU на каждом хопе |
+| Identification, Flags, Fragment Offset | Убрано из базового заголовка | Фрагментация — только через Extension Header, и **только на отправителе** |
+| Options | Убрано | Заменены Extension Headers |
+
+### Отсутствие Checksum — осознанное решение
+
+В IPv4 каждый роутер обязан:
+1. Декрементировать TTL
+2. **Пересчитать** Header Checksum (даже инкрементально — это CPU)
+
+В IPv6 checksum убран полностью. Логика:
+- **Ethernet** уже проверяет CRC32 на L2
+- **TCP/UDP** имеют собственные checksums (причём в IPv6 UDP checksum **обязателен**, в IPv4 был опциональным)
+- Убрав checksum, роутеры обрабатывают пакеты быстрее — критично при миллионах PPS
+
+```c
+// net/ipv6/ip6_input.c
+int ipv6_rcv(struct sk_buff *skb, struct net_device *dev,
+             struct packet_type *pt, struct net_device *orig_dev)
+{
+    struct ipv6hdr *hdr;
+
+    if (!pskb_may_pull(skb, sizeof(struct ipv6hdr)))
+        goto err;
+
+    hdr = ipv6_hdr(skb);
+
+    // Проверяем версию
+    if (hdr->version != 6)
+        goto err;
+
+    // НЕТ проверки checksum — его просто нет в заголовке!
+
+    // Проверяем payload_len
+    // ...
+
+    return NF_HOOK(NFPROTO_IPV6, NF_INET_PRE_ROUTING,
+                   net, NULL, skb, dev, NULL, ip6_rcv_finish);
+}
+```
+
+### Extension Headers: Цепочка вместо Options
+
+IPv6 заменил монолитные Options на **цепочку Extension Headers**. Каждый заголовок содержит поле `Next Header`, указывающее тип следующего:
+
+```
+IPv6 Header (nexthdr = 0)
+  → Hop-by-Hop Options (nexthdr = 43)
+    → Routing Header (nexthdr = 44)
+      → Fragment Header (nexthdr = 6)
+        → TCP Header
+```
+
+Основные Extension Headers:
+
+| Next Header | Тип | Назначение |
+|---|---|---|
+| 0 | Hop-by-Hop | Обрабатывается каждым роутером (Router Alert, Jumbogram) |
+| 43 | Routing | Аналог Source Routing в IPv4 (Type 2 для Mobile IPv6) |
+| 44 | Fragment | Фрагментация (только на отправителе!) |
+| 50 | ESP | IPsec шифрование |
+| 51 | AH | IPsec аутентификация |
+| 60 | Destination | Опции для конечного получателя |
+
+```c
+// Обработка Extension Headers в ядре — цепочка вызовов
+// net/ipv6/exthdrs.c
+
+// Каждый Extension Header регистрирует handler
+static const struct inet6_protocol rthdr_protocol = {
+    .handler     = ipv6_rthdr_rcv,    // Routing Header
+    .flags       = INET6_PROTO_NOPOLICY | INET6_PROTO_FINAL,
+};
+```
+
+**Проблема Extension Headers:** middleboxes. Многие файрволлы и роутеры дропают пакеты с Extension Headers, потому что не могут заглянуть в L4 (TCP/UDP header спрятан за цепочкой). RFC 7045 запрещает это, но на практике ~40% пакетов с Extension Headers теряются в интернете.
+
+### Фрагментация в IPv6: Радикально другой подход
+
+**В IPv6 промежуточные роутеры НЕ фрагментируют.** Это фундаментальное отличие от IPv4.
+
+Если пакет больше MTU канала, роутер:
+1. Дропает пакет
+2. Отправляет ICMPv6 Packet Too Big (тип 2) с MTU канала
+
+Фрагментация допускается **только на отправителе** через Fragment Extension Header:
+
+```c
+// Fragment Extension Header (8 байт)
+struct frag_hdr {
+    __u8    nexthdr;        // Тип следующего заголовка
+    __u8    reserved;       // Зарезервировано
+    __be16  frag_off;       // Offset (13 бит) + Res (2 бита) + M flag (1 бит)
+    __be32  identification; // Идентификатор фрагмента
+};
+```
+
+**Следствие: PMTUD обязателен для IPv6.** Нет запасного варианта с фрагментацией на промежуточных узлах. Если ICMPv6 Packet Too Big блокируется файрволлом — соединение ломается (PMTU black hole). Поэтому RFC 4890 **требует** пропускать ICMPv6 Packet Too Big.
+
+Минимальный MTU для IPv6 — **1280 байт** (против 68 в IPv4). Это гарантирует, что PMTUD может найти рабочий размер пакета.
+
+### Flow Label: Микрооптимизация для роутеров
+
+20-битное поле Flow Label — уникальная фича IPv6. Идея: все пакеты одного «потока» (src + dst + flow label) должны идти одним маршрутом.
+
+```bash
+# Посмотреть Flow Label в дампе
+tcpdump -i eth0 -v ip6
+
+# Linux генерирует flow label автоматически
+sysctl net.ipv6.flowlabel_state_ranges
+```
+
+Роутеры могут кешировать forwarding decision по (src, dst, flow_label) вместо полного lookup. Это ускоряет обработку пакетов одного соединения.
+
+### IPv6 в Linux: Dual Stack
+
+Linux использует dual-stack подход — IPv4 и IPv6 работают параллельно:
+
+```bash
+# Проверяем IPv6
+ip -6 addr show
+ip -6 route show
+
+# Статистика IPv6
+cat /proc/net/snmp6 | head -20
+
+# Отключение IPv6 (НЕ рекомендуется, но бывает нужно)
+sysctl -w net.ipv6.conf.all.disable_ipv6=1
+```
+
+**IPv4-mapped IPv6 addresses:** Серверы, слушающие на `::` (IPv6 any), автоматически принимают IPv4-соединения. IPv4-адрес `192.168.1.1` представляется как `::ffff:192.168.1.1`:
+
+```c
+// net/ipv6/af_inet6.c
+// Когда приходит IPv4-соединение на IPv6-сокет:
+// saddr = ::ffff:192.168.1.1
+// Это позволяет одному сокету обслуживать оба протокола
+```
+
+```bash
+# Один сервер на обоих стеках
+ss -tlnp | grep 443
+# LISTEN  0  128  *:443  → слушает и IPv4, и IPv6
+
+# Отдельные сокеты (IPV6_V6ONLY)
+sysctl net.ipv6.bindv6only=1
+```
+
+### NDP: Замена ARP
+
+В IPv6 нет ARP. Его заменяет **Neighbor Discovery Protocol (NDP)**, работающий поверх ICMPv6:
+
+| Функция | IPv4 | IPv6 (NDP) |
+|---|---|---|
+| Маппинг IP → MAC | ARP (broadcast) | Neighbor Solicitation (multicast) |
+| Router Discovery | DHCP / manual | Router Solicitation / Advertisement |
+| Duplicate Address Detection | ARP probe | DAD (Neighbor Solicitation) |
+| Redirect | ICMP Redirect | ICMPv6 Redirect |
+
+NDP использует multicast вместо broadcast — это снижает нагрузку на хосты, не участвующие в обмене.
+
+```bash
+# Таблица соседей IPv6 (аналог arp -a)
+ip -6 neigh show
+
+# Отслеживание NDP
+tcpdump -i eth0 'icmp6 and (ip6[40] == 135 or ip6[40] == 136)'
+# 135 = Neighbor Solicitation, 136 = Neighbor Advertisement
+```
+
+### IPv6-специфичные проблемы в production
+
+**1. Privacy Extensions (RFC 4941):**
+Клиенты генерируют случайные IPv6-адреса, меняющиеся каждые несколько часов. Это ломает IP-based ACL и лог-корреляцию.
+
+```bash
+# Проверить
+sysctl net.ipv6.conf.eth0.use_tempaddr
+# 0 = выключено, 2 = предпочитать temporary адреса
+```
+
+**2. Сканирование сети:**
+IPv4 подсеть /24 = 256 адресов, просканировать тривиально. IPv6 /64 = 2^64 адресов — полный скан невозможен. Это и плюс (безопасность), и минус (инвентаризация).
+
+**3. Happy Eyeballs (RFC 8305):**
+Современные приложения пробуют IPv6 и IPv4 параллельно. Если IPv6 не отвечает за 250ms — переключаются на IPv4. Это маскирует проблемы с IPv6.
+
+```bash
+# Проверить, используется ли IPv6
+curl -v https://example.com 2>&1 | grep "Connected to"
+# Или принудительно
+curl -6 https://example.com
+curl -4 https://example.com
+```
 
 ---
 
