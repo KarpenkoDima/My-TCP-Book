@@ -231,6 +231,77 @@ Get-ChildItem $path | ForEach-Object {
     Restart-NetAdapter -Name $adapter.Name
     ```
 
+### Modern Standby (S0ix) — Новая реальность Power Management
+
+Всё вышесказанное про `AllowComputerToTurnOffDevice` работало в эпоху классического S3 Sleep. Но с ~2020 года **все** современные ноутбуки (Intel 10th gen+, ARM) используют **Modern Standby (S0 Low Power Idle)** — и правила игры полностью изменились.
+
+!!! warning "Modern Standby (S0) убивает старый Power Management"
+    В Modern Standby классический спящий режим (S3) мёртв. Вместо него работает
+    **S0 Low Power Idle** — компьютер «спит», но ядро ОС продолжает работать.
+    В этом режиме галочка «Разрешить отключение этого устройства для экономии
+    энергии» **игнорируется**.
+
+    ОС сама решает, отключить ли Wi-Fi во сне через механизм
+    «Network Disconnected Standby». Результат: Always On VPN рвётся
+    при закрытии крышки, Wi-Fi мучительно переподключается при открытии.
+
+```powershell
+# === Проверить: какой режим сна поддерживается? ===
+powercfg /a
+# Ищем в выводе:
+# "Standby (S0 Low Power Idle) Network Connected"   ← Modern Standby, сеть жива
+# "Standby (S0 Low Power Idle) Network Disconnected" ← Modern Standby, сеть рубится
+# "Standby (S3)"                                     ← Классический S3
+
+# Если видите "Network Disconnected" — Wi-Fi выключается при засыпании!
+
+# === Заставить Windows держать сеть во сне ===
+# GUID F15576E8-98B7-4186-B944-EAFA664402D9 = "Network Connectivity in Standby"
+# Значение 1 = Enabled (держать сеть), 0 = Disabled (рубить)
+
+# На батарее (DC):
+powercfg /setdcvalueindex scheme_current sub_none F15576E8-98B7-4186-B944-EAFA664402D9 1
+
+# От сети (AC):
+powercfg /setacvalueindex scheme_current sub_none F15576E8-98B7-4186-B944-EAFA664402D9 1
+
+# Применить
+powercfg /setactive scheme_current
+
+# Проверить текущее значение
+powercfg /query scheme_current sub_none F15576E8-98B7-4186-B944-EAFA664402D9
+# Current AC Power Setting Index: 0x00000001 ← 1 = сеть жива
+
+# === Для массового развёртывания через Intune / GPO ===
+# Реестр:
+Set-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Control\Power\PowerSettings\F15576E8-98B7-4186-B944-EAFA664402D9" `
+    -Name "Attributes" -Value 2 -Type DWord
+# Attributes=2 делает эту настройку видимой в powercfg GUI
+
+# Или через PowerShell DSC / Intune Remediation:
+# Detection: powercfg /query проверяет значение
+# Remediation: powercfg /setdcvalueindex + /setacvalueindex
+```
+
+!!! danger "Modern Standby + Always On VPN = рвущийся туннель"
+    Хронология при закрытии крышки на Modern Standby (без фикса):
+
+    1. Крышка закрыта → S0 Low Power Idle
+    2. Windows через ~30 сек решает отключить Wi-Fi (экономия батареи)
+    3. IKEv2 tunnel рвётся (Dead Peer Detection timeout)
+    4. Крышка открыта → Wi-Fi переподключается (~3-5 сек)
+    5. VPN поднимается (~5-15 сек)
+    6. NLA переоценивает сеть → Domain profile (ещё ~5 сек)
+    7. **Итого: 15-25 секунд без корпоративной сети**
+
+    С фиксом (Network Connected Standby):
+    1. Крышка закрыта → S0 Low Power Idle, Wi-Fi жив
+    2. IKEv2 keepalive проходит
+    3. Крышка открыта → сеть уже есть
+    4. **Итого: 0 секунд downtime**
+
+    Цена: ~5-10% больше расход батареи в спящем режиме.
+
 ### ETW-трассировка Wi-Fi (тяжёлая артиллерия)
 
 ```powershell
@@ -412,6 +483,67 @@ Set-DnsClientServerAddress -InterfaceIndex $adapter.ifIndex `
     # 0 = Disabled, 1 = Allow, 2 = Require
     ```
 
+### SMHNR: Smart Multi-Homed Name Resolution — Главная причина DNS Leaks
+
+Даже с идеально настроенным NRPT, Windows 10/11 имеет ещё один механизм, который **сводит с ума безопасников**: Smart Multi-Homed Name Resolution.
+
+!!! danger "SMHNR: DNS-запросы утекают мимо NRPT"
+    **Суть:** Когда у машины несколько сетевых интерфейсов (Wi-Fi + Ethernet + VPN),
+    Windows по умолчанию отправляет DNS-запросы на **все** интерфейсы параллельно.
+    Если основной DNS не ответил за доли секунды — Windows берёт ответ от того, кто
+    ответил первым.
+
+    **Результат:** Внутренний корпоративный запрос `secret-server.corp.local`
+    улетает на 8.8.8.8 через Wi-Fi провайдера. ISP видит, какие внутренние домены
+    вы резолвите. Это колоссальная дыра в безопасности.
+
+    NRPT **не спасает**, потому что SMHNR работает на уровне ниже — в DNS Client
+    Service до применения NRPT policy.
+
+```powershell
+# === Проверить: включён ли SMHNR? ===
+Get-ItemProperty "HKLM:\Software\Policies\Microsoft\Windows NT\DNSClient" `
+    -Name "DisableSmartNameResolution" -ErrorAction SilentlyContinue
+# Если свойство отсутствует или = 0 → SMHNR ВКЛЮЧЁН (по умолчанию!)
+
+# === ОТКЛЮЧИТЬ SMHNR (обязательно для корпоративных машин с VPN!) ===
+
+# Через реестр:
+New-Item -Path "HKLM:\Software\Policies\Microsoft\Windows NT\DNSClient" -Force | Out-Null
+Set-ItemProperty "HKLM:\Software\Policies\Microsoft\Windows NT\DNSClient" `
+    -Name "DisableSmartNameResolution" -Value 1 -Type DWord
+
+# Через GPO (рекомендуемый способ для enterprise):
+# Computer Configuration → Administrative Templates → Network → DNS Client →
+# "Turn off smart multi-homed name resolution" = Enabled
+
+# === Проверить утечку: куда РЕАЛЬНО уходят DNS-запросы ===
+# Включаем DNS Client ETW:
+$session = New-EtwTraceSession -Name "DNSTrace" -LogFileMode 0x8
+Add-EtwTraceProvider -SessionName "DNSTrace" `
+    -Guid "{1C95126E-7EEA-49A9-A3FE-A378B03DDB4D}" -Level 5
+# Это Microsoft-Windows-DNS-Client provider
+
+# Генерируем DNS-запрос
+Resolve-DnsName -Name "secret-server.corp.local"
+
+# Через pktmon — видим, через какие интерфейсы ушли UDP:53 пакеты
+pktmon start --capture --type all -p 53
+Start-Sleep -Seconds 5
+pktmon stop
+pktmon format PktMon.etl -o dns_leak.txt
+# Если видите UDP:53 на НЕСКОЛЬКИХ интерфейсах — SMHNR утекает
+```
+
+!!! tip "Дополнительная защита: DNS-only binding"
+    Помимо отключения SMHNR, привяжите DNS-серверы к конкретным интерфейсам:
+    ```powershell
+    # Убрать DNS с Wi-Fi (оставить только на VPN):
+    Set-DnsClientServerAddress -InterfaceAlias "Wi-Fi" -ServerAddresses @()
+    # Теперь Wi-Fi не имеет DNS-серверов — запросы пойдут только через VPN
+    # Минус: без VPN DNS не работает вообще
+    ```
+
 ### Interface Metric и DNS Priority
 
 Когда у клиента Wi-Fi + Ethernet + VPN — в каком порядке опрашиваются DNS-серверы?
@@ -494,6 +626,51 @@ Resolve-DnsName -Name "dns.msftncsi.com"
 # Если proxy делает SSL inspection — сертификат msftconnecttest.com
 # будет от proxy CA, NCSI может не доверять → "No Internet"
 ```
+
+### NCSI и IPv6: Параллельная проверка, о которой забывают
+
+NCSI проверяет не только IPv4. Параллельно идут **IPv6-пробы**:
+
+```
+IPv4 Probe:                              IPv6 Probe (параллельно):
+  DNS: dns.msftncsi.com                    DNS: dns.msftncsi.com (AAAA)
+  Ожидает: 131.107.255.255                 Ожидает: fd3e:4f5a:5b81::1
+  HTTP: www.msftconnecttest.com            HTTP: ipv6.msftconnecttest.com
+```
+
+!!! danger "IPv6 NCSI ломает метрики и DirectAccess"
+    Если ваша сеть фильтрует AAAA-запросы или блокирует IPv6-трафик к
+    Microsoft, NCSI отметит IPv6 как "No Internet", даже если IPv4 работает.
+
+    Последствия:
+    - **DirectAccess / Always On VPN (IPv6):** NCSI видит "No IPv6 Internet" →
+      клиент считает, что корпоративный IPv6-туннель мёртв → переключается
+      на fallback → рост latency
+    - **Метрики интерфейсов:** Windows может увеличить metric для интерфейса
+      с "No Internet" IPv6, сломав маршрутизацию
+    - **Teredo/ISATAP:** Transition-технологии зависят от IPv6 NCSI status
+
+    Диагностика:
+    ```powershell
+    # Проверить IPv6 connectivity status
+    Get-NetConnectionProfile |
+        Select-Object InterfaceAlias, IPv4Connectivity, IPv6Connectivity
+    # Если IPv4Connectivity=Internet, IPv6Connectivity=NoTraffic — проблема
+
+    # Проверить, резолвится ли IPv6 NCSI endpoint
+    Resolve-DnsName -Name "dns.msftncsi.com" -Type AAAA
+    # Должно быть: fd3e:4f5a:5b81::1
+
+    # Если ваша сеть не поддерживает IPv6 — отключите IPv6 NCSI:
+    # Или отключите IPv6 на интерфейсе, если он не используется:
+    Disable-NetAdapterBinding -Name "Wi-Fi" -ComponentID "ms_tcpip6"
+    # ВНИМАНИЕ: это отключит IPv6 полностью на Wi-Fi
+    ```
+
+    Для корпоративных сетей с IPv6 — убедитесь, что firewall/proxy пропускает:
+    - `dns.msftncsi.com` (AAAA записи)
+    - `ipv6.msftconnecttest.com` (HTTP/HTTPS по IPv6)
+    - `fd3e:4f5a:5b81::1` (прямой IP)
 
 ### Настройка NCSI через реестр
 
