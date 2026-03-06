@@ -750,4 +750,136 @@ iperf3 -c 192.168.50.10 -t 30
 
 ---
 
-**Следующий модуль:** Traffic Control, Тюнинг и Диагностика — как ядро планирует отправку пакетов и как настроить приоритезацию трафика в production.
+## Часть 3.10: TLS Handshake — Шифрование поверх TCP
+
+Современный интернет полностью зашифрован. После TCP 3-way handshake **всегда** следует TLS handshake. Это дополнительные RTT, которые напрямую влияют на latency.
+
+### TLS 1.2 — 2 дополнительных RTT
+
+```
+Клиент                                   Сервер
+  │                                         │
+  │  ── TCP SYN ──────────────────────────→ │  RTT 1 (TCP)
+  │  ←─ TCP SYN-ACK ─────────────────────  │
+  │  ── TCP ACK ──────────────────────────→ │
+  │                                         │
+  │  ── ClientHello ──────────────────────→ │  RTT 2 (TLS)
+  │  ←─ ServerHello, Certificate,          │
+  │     ServerKeyExchange, ServerHelloDone  │
+  │                                         │
+  │  ── ClientKeyExchange, ChangeCipherSpec│  RTT 3 (TLS)
+  │     Finished ─────────────────────────→│
+  │  ←─ ChangeCipherSpec, Finished ────────│
+  │                                         │
+  │  ── HTTP GET (encrypted) ─────────────→│  RTT 4 (первый запрос!)
+```
+
+**Итого:** 3 RTT до первого байта данных (1 TCP + 2 TLS). При RTT = 100ms — 300ms ожидания.
+
+### TLS 1.3 — 1 дополнительный RTT
+
+```
+Клиент                                   Сервер
+  │                                         │
+  │  ── TCP SYN ──────────────────────────→ │  RTT 1 (TCP)
+  │  ←─ TCP SYN-ACK ─────────────────────  │
+  │  ── TCP ACK ──────────────────────────→ │
+  │                                         │
+  │  ── ClientHello + KeyShare ───────────→ │  RTT 2 (TLS 1.3)
+  │  ←─ ServerHello + KeyShare,            │
+  │     EncryptedExtensions, Certificate,   │
+  │     Finished                            │
+  │  ── Finished ─────────────────────────→ │
+  │                                         │
+  │  ── HTTP GET (encrypted) ─────────────→ │  RTT 3 (первый запрос)
+```
+
+**Итого:** 2 RTT до первого байта данных (1 TCP + 1 TLS). Ключевая оптимизация: клиент отправляет `KeyShare` уже в `ClientHello`, сервер может сразу вычислить общий секрет.
+
+### TLS 1.3 0-RTT (Early Data)
+
+При повторном подключении к серверу, с которым уже общались:
+
+```
+Клиент                                   Сервер
+  │                                         │
+  │  ── TCP SYN ──────────────────────────→ │  RTT 1 (TCP)
+  │  ←─ TCP SYN-ACK ─────────────────────  │
+  │  ── TCP ACK ──────────────────────────→ │
+  │                                         │
+  │  ── ClientHello + KeyShare             │  RTT 2 (TLS + данные!)
+  │     + Early Data (HTTP GET) ──────────→│
+  │  ←─ ServerHello + Finished             │
+  │     + HTTP Response ──────────────────  │
+```
+
+**Итого:** 1 RTT до первого байта данных. Клиент отправляет зашифрованный HTTP-запрос **вместе с ClientHello**, используя PSK (Pre-Shared Key) из предыдущей сессии.
+
+**Опасность 0-RTT:** Early Data не защищена от replay-атак. Сервер не может гарантировать, что запрос не был перехвачен и воспроизведён. Поэтому 0-RTT безопасен **только для идемпотентных запросов** (GET, HEAD). Никогда — для POST с side effects.
+
+### TCP Fast Open + TLS 1.3 = 0-RTT end-to-end
+
+```
+Клиент                                   Сервер
+  │                                         │
+  │  ── TCP SYN + TFO Cookie              │  1 RTT = TCP + TLS + данные
+  │     + ClientHello + KeyShare           │
+  │     + Early Data ─────────────────────→│
+  │  ←─ SYN-ACK + ServerHello             │
+  │     + HTTP Response ──────────────────  │
+```
+
+Комбинация TCP Fast Open (часть 3.3) и TLS 1.3 0-RTT позволяет отправить HTTP-запрос **в первом же SYN-пакете**. Реальный 0-RTT.
+
+### kTLS — шифрование в ядре
+
+Начиная с Linux 4.13, TLS record layer можно перенести в ядро:
+
+```c
+// User space
+setsockopt(fd, SOL_TCP, TCP_ULP, "tls", sizeof("tls"));
+setsockopt(fd, SOL_TLS, TLS_TX, &crypto_info, sizeof(crypto_info));
+
+// После этого:
+// - Handshake: user space (OpenSSL / rustls)
+// - Record encryption: kernel (crypto API / AES-NI)
+// - sendfile() работает напрямую: файл → шифрование → NIC
+```
+
+**Зачем:** Без kTLS `sendfile()` бесполезен для HTTPS — данные нужно читать в user space для шифрования. kTLS возвращает zero-copy: `sendfile()` отправляет файл напрямую через TLS, не копируя в user space.
+
+**Nginx** с kTLS (начиная с 1.21.4) показывает до **30% снижения CPU** на TLS-тяжёлых нагрузках.
+
+### Влияние на диагностику
+
+```bash
+# Проблема: Wireshark видит только шифротекст после handshake
+# Решение 1: SSLKEYLOGFILE для расшифровки
+export SSLKEYLOGFILE=/tmp/keys.log
+curl https://example.com
+# Wireshark → Preferences → TLS → (Pre)-Master-Secret log filename
+
+# Решение 2: ss показывает TCP-метрики независимо от TLS
+ss -ti dst example.com
+# rto:204 rtt:12.5/6.2 cwnd:10 retrans:0/0 — это TCP, шифрование не мешает
+
+# Решение 3: openssl s_client для диагностики handshake
+openssl s_client -connect example.com:443 -tls1_3 -msg 2>&1 | grep -E "Handshake|Protocol"
+```
+
+### Сравнение RTT до первых данных
+
+| Протокол | RTT до данных | Комментарий |
+|---|---|---|
+| TCP | 1 RTT | Без шифрования (только 3-way handshake) |
+| TCP + TLS 1.2 | 3 RTT | Два дополнительных round-trip |
+| TCP + TLS 1.3 | 2 RTT | Один дополнительный round-trip |
+| TCP + TLS 1.3 (0-RTT) | 1 RTT | Повторное подключение с PSK |
+| TFO + TLS 1.3 (0-RTT) | 0 RTT | Данные в SYN (оба cookie/PSK cached) |
+| **QUIC** | **0-1 RTT** | **TLS 1.3 встроен в транспорт (см. Модуль 7)** |
+
+Именно эта разница в RTT — главная причина создания QUIC: убрать накладные расходы на отдельный TLS handshake поверх TCP (подробнее в Модуле 7).
+
+---
+
+**Следующий модуль:** Bufferbloat и Congestion Control — как TCP управляет скоростью передачи и почему буферы убивают latency.

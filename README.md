@@ -4,15 +4,22 @@
 
 ---
 
-## О книге
+## Для кого эта книга
 
-12 000+ строк технического материала для Senior-инженеров, которые хотят понимать сети **на уровне ядра**, а не на уровне GUI. Каждый модуль содержит:
+- **Senior System/Network Engineers** — кто хочет понимать, почему пинг растёт при скачивании, где теряются пакеты и как работает BBR
+- **High-Load Backend Developers** — кто пишет на .NET/C# и хочет выжать максимум из Kestrel, io_uring и System.IO.Pipelines
+- **Windows Enterprise Engineers** — кто устал гадать, почему svchost грузит CPU, почему Windows говорит «Нет интернета» и как EDR-агенты убивают latency
+- **DevOps/SRE** — кто строит chaos engineering стенды и тюнит sysctl на production-серверах
 
-- **Kernel code** — реальные структуры и функции из исходников Linux/Windows
-- **Диагностика** — eBPF, ETW, ss, pktmon, WinDbg
-- **Production-сценарии** — что ломается и как чинить
-- **Практические задания** — hands-on labs с конкретными командами
-- **Chaos Engineering** — контролируемое внедрение сбоев
+## Что вы узнаете
+
+- Почему пинг растёт при скачивании торрента (Bufferbloat, AQM)
+- Где именно теряются пакеты в ядре Linux (NAPI budget, sk_buff, ring buffer overflow)
+- Как BBR обходит CUBIC на трансатлантических линках и почему ему нужен fq
+- Почему `TIME_WAIT` — не баг, а фича, и когда `tw_reuse` безопасен
+- Как CrowdStrike Falcon может удвоить p99 latency на SQL Server
+- Почему Windows говорит «Нет интернета» при работающем VPN (NCSI + NLA)
+- Как написать zero-copy proxy на io_uring и почему sendfile() бесполезен для HTTPS (без kTLS)
 
 ---
 
@@ -21,7 +28,7 @@
 ### Часть I: Linux Network Stack — От провода до сокета
 
 #### [Модуль 1: Физика и Ядро](modules/Module-01-Physical-Layer-and-Kernel.md)
-*«Где реально умирают пакеты»* — 1465 строк
+*«Где реально умирают пакеты»*
 
 - 1.1 Жизнь пакета до Socket API (DMA, Ring Buffer, struct sk_buff)
 - 1.2 Hard IRQ и NAPI (прерывания, polling, budget)
@@ -29,25 +36,26 @@
 - 1.4 sk_buff — главная структура ядра (linear data, page frags, cloning)
 - 1.5 Offloading (TSO, GRO, GSO, checksum offload)
 - 1.6 Kernel Bypass (DPDK, AF_XDP, io_uring zerocopy)
-- Практика: ethtool, /proc/interrupts, bpftrace, XDP program
 
 ---
 
-#### [Модуль 2: Bufferbloat и Congestion Control](modules/Module-02-Congestion-Control.md)
-*«Война за очередь»* — 2125 строк
+#### [Модуль 2: Internet Protocol](modules/Module-02-IP-Protocol.md)
+*«Анатомия сетевого уровня»*
 
-- 2.1 Анатомия Bufferbloat (Little's Law, queueing theory)
-- 2.2 CUBIC — рабочая лошадка интернета (cubic_cong_avoid(), Wmax, β=0.7)
-- 2.3 BBR — Bottleneck Bandwidth and RTT (bbr_update_bw(), bbr_update_min_rtt(), фазы: Startup/Drain/ProbeBW/ProbeRTT)
-- 2.4 DCTCP и ECN — Congestion Control для дата-центров
-- 2.5 AQM — Active Queue Management (CoDel, FQ_CoDel, CAKE с kernel code)
-- 2.6 Искусственное ограничение скорости (Shaping)
-- Практика: CUBIC vs BBR бенчмарк, Amsterdam→NY кейс, sysctl tuning
+- 2.1 IP Header — 20 байт (struct iphdr, ip_rcv() с kernel code)
+- 2.2 IP Checksum — one's complement, инкрементальное обновление
+- 2.3 Фрагментация (ip_fragment(), PMTUD, DF bit, MTU 1500, Jumbo Frames)
+- 2.4 Routing — FIB trie (Patricia trie, longest prefix match, Policy Routing)
+- 2.5 IP Forwarding Path (ip_forward(), Netfilter hooks, conntrack overhead)
+- 2.6 IP Options — редкие, но опасные (Source Routing, slow path)
+- 2.7 Multicast (IGMP, MFC, финансовые фиды, IPTV)
+- 2.8 IPsec Integration (XFRM framework, ESP, AES-GCM, hardware offload)
+- 2.9 **IPv6** — struct ipv6hdr, Extension Headers, NDP, dual-stack
 
 ---
 
 #### [Модуль 3: TCP State Machine](modules/Module-03-TCP-State-Machine.md)
-*«Жизненный цикл соединения»* — 753 строки
+*«Жизненный цикл соединения»*
 
 - 3.1 TCP State Machine — 11 состояний (ASCII-диаграмма полного автомата)
 - 3.2 Three-Way Handshake (secure_tcp_seq(), ISN generation)
@@ -58,45 +66,42 @@
 - 3.7 Таймеры TCP (RTO, Persist, Keepalive, TIME_WAIT, FIN_WAIT_2)
 - 3.8 Диагностика состояний (ss -ti, nstat, /proc/net/tcp, eBPF)
 - 3.9 Типичные production-проблемы (CLOSE_WAIT leak, TIME_WAIT exhaustion)
+- **3.10 TLS Handshake** — TLS 1.2 vs 1.3, 0-RTT, TCP Fast Open + TLS, kTLS в ядре
 
 ---
 
-#### [Модуль 4: Traffic Control, Тюнинг и Диагностика](modules/Module-04-Traffic-Control-Tuning-Diagnostics.md)
-*«Режим Бога»* — 792 строки
+#### [Модуль 4: Bufferbloat и Congestion Control](modules/Module-04-Congestion-Control.md)
+*«Война за очередь»*
 
-- 4.1 Архитектура Qdisc (struct Qdisc, __dev_xmit_skb(), TX path)
-- 4.2 Classless vs Classful Qdisc (pfifo_fast, fq_codel, HTB, HFSC)
-- 4.3 TC Filters и Классификация (u32, flower, BPF classifier)
-- 4.4 Production Example — полная настройка HTB для веб-сервера
-- 4.5 Chaos Engineering с tc netem (delay, loss, corruption, reorder)
-- 4.6 Микроберсты — невидимый убийца
-- 4.7 eBPF и BCC — рентген ядра (tcpretrans, tcplife, tcpconnlat, bpftrace)
-- 4.8 Sysctl Tuning — опасная зона (tcp_rmem/wmem, somaxconn, tw_reuse)
-- 4.9 Performance Impact и оптимизация
-- 4.10 Продвинутые техники
+- 4.1 Анатомия Bufferbloat (Little's Law, queueing theory)
+- 4.2 CUBIC — рабочая лошадка интернета (cubic_cong_avoid(), Wmax, β=0.7)
+- 4.3 BBR — Bottleneck Bandwidth and RTT (фазы: Startup/Drain/ProbeBW/ProbeRTT)
+- 4.4 DCTCP и ECN — Congestion Control для дата-центров
+- 4.5 AQM — Active Queue Management (CoDel, FQ_CoDel, CAKE с kernel code)
+- 4.6 Искусственное ограничение скорости (Shaping)
 
 ---
 
-#### [Модуль 5: Internet Protocol](modules/Module-05-IP-Protocol.md)
-*«Анатомия сетевого уровня»* — 933 строки
+#### [Модуль 5: Traffic Control, Тюнинг и Диагностика](modules/Module-05-Traffic-Control-Tuning-Diagnostics.md)
+*«Режим Бога»*
 
-- 5.1 IP Header — 20 байт (struct iphdr, ip_rcv() с kernel code)
-- 5.2 IP Checksum — one's complement, инкрементальное обновление
-- 5.3 Фрагментация (ip_fragment(), PMTUD, DF bit, MTU 1500, Jumbo Frames)
-- 5.4 Routing — FIB trie (Patricia trie, longest prefix match, Policy Routing)
-- 5.5 IP Forwarding Path (ip_forward(), Netfilter hooks, conntrack overhead)
-- 5.6 IP Options — редкие, но опасные (Source Routing, slow path)
-- 5.7 Multicast (IGMP, MFC, финансовые фиды, IPTV)
-- 5.8 IPsec Integration (XFRM framework, ESP, AES-GCM, hardware offload)
-- 5.9 **IPv6** — struct ipv6hdr, отсутствие checksum, Extension Headers, обязательный PMTUD, Flow Label, NDP, dual-stack, production-проблемы
-- Практика: scapy craft, bpftrace ip_rcv, фрагментация, Policy Routing
+- 5.1 Архитектура Qdisc (struct Qdisc, __dev_xmit_skb(), TX path)
+- 5.2 Classless vs Classful Qdisc (pfifo_fast, fq_codel, HTB, HFSC)
+- 5.3 TC Filters и Классификация (u32, flower, BPF classifier)
+- 5.4 Production Example — полная настройка HTB для веб-сервера
+- 5.5 Chaos Engineering с tc netem (delay, loss, corruption, reorder)
+- 5.6 Микроберсты — невидимый убийца
+- 5.7 eBPF и BCC — рентген ядра (tcpretrans, tcplife, tcpconnlat, bpftrace)
+- 5.8 Sysctl Tuning — опасная зона (tcp_rmem/wmem, somaxconn, tw_reuse)
+- 5.9 Performance Impact и оптимизация
+- 5.10 Продвинутые техники
 
 ---
 
 ### Часть II: Прикладной уровень и будущее
 
 #### [Модуль 6: Архитектура приложений](modules/Module-06-Application-Architecture.md)
-*«Пишем код, который летает»* — 444 строки
+*«Пишем код, который летает»*
 
 - 6.1 Zero-Copy (sendfile, splice, MSG_ZEROCOPY, vmsplice)
 - 6.2 IO Models — эволюция (select → poll → epoll → io_uring)
@@ -106,7 +111,7 @@
 ---
 
 #### [Модуль 7: QUIC и HTTP/3](modules/Module-07-QUIC-HTTP3.md)
-*«Будущее транспортного уровня»* — 452 строки
+*«Будущее транспортного уровня»*
 
 - 7.1 Фундаментальные проблемы TCP для Web (HoL blocking, handshake latency)
 - 7.2 Архитектура QUIC (UDP + TLS 1.3 + streams)
@@ -122,30 +127,65 @@
 
 ---
 
-### Часть III: Лаборатории и Chaos Engineering
+### Часть III: Windows Network Internals
 
-#### [Модуль 8: EVE-NG Lab](modules/Module-08-EVE-NG-Lab.md)
-*«Боевой полигон для .NET и Chaos Engineering»* — 1581 строка
+#### [Модуль 8: Windows Server Network Stack](modules/Module-08-Windows-Network-Stack.md)
+*«NDIS, RSS и траблшутинг на уровне ядра»*
+
+- 8.1 Ментальная модель (аэропорт = NDIS pipeline)
+- 8.2 Архитектура NDIS 6.x (NET_BUFFER_LIST, filter chain, miniport)
+- 8.3 RSS — Receive Side Scaling (Toeplitz hash, NUMA trap, UDP hash)
+- 8.4 VMQ и dVMQ — RSS для Hyper-V
+- 8.5 RSC — Receive Segment Coalescing (latency trade-off)
+- 8.6 SR-IOV — обход гипервизора (VF, Live Migration failover)
+- 8.7 WFP — Windows Filtering Platform + **EDR-агенты** (CrowdStrike/Defender callout overhead, диагностика через xperf и netsh wfp show state)
+- 8.8 tcpip.sys (CUBIC/DCTCP/LEDBAT, AutoTuning, AFD.sys)
+- 8.9 Хирургическая диагностика (ETW, xperf, WPA, DPC/ISR analysis)
+- 8.10 Hardcore Lab — Chaos Engineering на Windows
+- 8.11 Чеклист для Production (Invoke-NetworkStackAudit)
+
+---
+
+#### [Модуль 9: Windows Client Networking](modules/Module-09-Windows-Client-Networking.md)
+*«Wi-Fi, DNS Client, VPN и "Нет интернета"»*
+
+- 9.1 Анатомия клиентского стека (nwifi.sys, WLAN AutoConfig)
+- 9.2 Wi-Fi Stack — 802.11 изнутри (roaming, power management, Modern Standby)
+- 9.3 DNS Client (NRPT, DoH, SMHNR, negative cache trap)
+- 9.4 NCSI — «Нет интернета» (IPv6 NCSI, кастомный endpoint для air-gapped сетей)
+- 9.5 NLA — Network Location Awareness (гонка Domain/Public при VPN)
+- 9.6 VPN Stack (Always On VPN, IKEv2, split tunneling, MTU black hole)
+- 9.7 Сетевые сбросы (winsock reset, ip reset, adapter reset)
+- 9.8 ETW-диагностика клиентских проблем
+- 9.9 Типичные проблемы — Cookbook
+- 9.10 Invoke-ClientNetworkDiag — полная диагностика одной командой
+
+---
+
+### Часть IV: Лаборатории и Chaos Engineering
+
+#### [Модуль 10: EVE-NG Lab](modules/Module-10-EVE-NG-Lab.md)
+*«Боевой полигон для .NET и Chaos Engineering»*
 
 - **Этап 1 — Инфраструктура:** 7 узлов, 4 зоны, OSPF (VyOS + Cisco IOL)
-  - 8.1 Архитектура стенда (топология, адресная схема, ресурсы VM)
-  - 8.2 Создание топологии в EVE-NG
-  - 8.3 Базовая настройка Linux-узлов (Netplan)
-  - 8.4 Конфигурация VyOS/Cisco роутеров (OSPF Area 0)
+  - 10.1 Архитектура стенда (топология, адресная схема, ресурсы VM)
+  - 10.2 Создание топологии в EVE-NG
+  - 10.3 Базовая настройка Linux-узлов (Netplan)
+  - 10.4 Конфигурация VyOS/Cisco роутеров (OSPF Area 0)
 - **Этап 2 — Ansible:** полная автоматизация
-  - 8.5 Inventory (YAML, group_vars, sysctl из Модуля 4)
-  - 8.6 Playbooks: base-setup, .NET Runtime, Redis, PostgreSQL
+  - 10.5 Inventory (YAML, group_vars, sysctl из Модуля 5)
+  - 10.6 Playbooks: base-setup, .NET Runtime, Redis, PostgreSQL
 - **Этап 3 — Chaos Engineering:** внедрение сбоев
-  - 8.7 Теория (где внедрять: роутер vs endpoint)
-  - 8.8 High Latency (150ms+jitter → Npgsql pool exhaustion), Packet Loss (5% → Polly retry + Circuit Breaker), Bandwidth Shaping (10Mbit HTB → backpressure, Channel\<T\>)
-  - 8.9 VyOS-native Traffic Policy
-  - 8.10 Мониторинг (Prometheus + Grafana + .NET metrics)
-  - 8.11 Скрипт полного развёртывания
+  - 10.7 Теория (где внедрять: роутер vs endpoint)
+  - 10.8 High Latency, Packet Loss, Bandwidth Shaping — детальный разбор
+  - 10.9 VyOS-native Traffic Policy
+  - 10.10 Мониторинг (Prometheus + Grafana + .NET metrics)
+  - 10.11 Скрипт полного развёртывания
 
 ---
 
 #### [Лабораторный стенд — Базовый](modules/Lab-Setup.md)
-*«Полигон для экспериментов»* — 1062 строки
+*«Полигон для экспериментов»*
 
 - Уровень 1: Network Namespaces (5 минут, zero overhead)
 - Уровень 2: VMware 3-VM топология
@@ -154,86 +194,19 @@
 
 ---
 
-### Часть IV: Windows Network Internals
-
-#### [Модуль 9: Windows Server Network Stack](modules/Module-09-Windows-Network-Stack.md)
-*«NDIS, RSS и траблшутинг на уровне ядра»* — 1089 строк
-
-- 9.1 Ментальная модель (аэропорт = NDIS pipeline)
-- 9.2 Архитектура NDIS 6.x (NET_BUFFER_LIST, filter chain, miniport)
-- 9.3 RSS — Receive Side Scaling (Toeplitz hash, NUMA trap, UDP hash)
-- 9.4 VMQ и dVMQ — RSS для Hyper-V
-- 9.5 RSC — Receive Segment Coalescing (latency trade-off)
-- 9.6 SR-IOV — обход гипервизора (VF, Live Migration failover)
-- 9.7 WFP — Windows Filtering Platform (filter forensics, pktmon vs Wireshark)
-- 9.8 tcpip.sys (CUBIC/DCTCP/LEDBAT, AutoTuning, AFD.sys)
-- 9.9 Хирургическая диагностика (ETW, xperf, WPA, DPC/ISR analysis)
-- 9.10 Hardcore Lab — Chaos Engineering на Windows
-- 9.11 Чеклист для Production (Invoke-NetworkStackAudit)
-
----
-
-#### [Модуль 10: Windows Client Networking](modules/Module-10-Windows-Client-Networking.md)
-*«Wi-Fi, DNS Client, VPN и "Нет интернета"»* — 1398 строк
-
-- 10.1 Анатомия клиентского стека (nwifi.sys, WLAN AutoConfig)
-- 10.2 Wi-Fi Stack — 802.11 изнутри
-  - Roaming analysis (Event ID 12011/12012, 802.11r FT)
-  - Power Management (PnPCapabilities registry)
-  - **Modern Standby (S0ix)** — powercfg GUID, Network Connected Standby
-  - ETW-трассировка `scenario=wlan`
-- 10.3 DNS Client
-  - Полный путь резолвинга (Cache → HOSTS → NRPT → Interface DNS)
-  - Negative cache trap (MaxNegativeCacheTtl = 900!)
-  - NRPT — перехват DNS VPN-клиентами, catch-all namespace "."
-  - DoH (DNS over HTTPS) — конфликт с корпоративным DNS
-  - **SMHNR** — Smart Multi-Homed Name Resolution (DNS leak мимо NRPT)
-  - Interface Metric и приоритет DNS
-- 10.4 NCSI — «Нет интернета» (DNS + HTTP + HTTPS probes)
-  - Почему NCSI врёт (proxy, captive portal, SSL inspection)
-  - **IPv6 NCSI** — параллельные пробы к ipv6.msftncsi.com
-  - Кастомный NCSI endpoint для air-gapped сетей
-- 10.5 NLA — Network Location Awareness (гонка Domain/Public при VPN)
-- 10.6 VPN Stack (Always On VPN, IKEv2, split tunneling, MTU black hole)
-- 10.7 Сетевые сбросы (winsock reset, ip reset, adapter reset)
-- 10.8 ETW-диагностика клиентских проблем
-- 10.9 Типичные проблемы — Cookbook
-- 10.10 Invoke-ClientNetworkDiag — полная диагностика одной командой
-
----
-
-## Статистика
-
-| Модуль | Строк | Тема |
-|---|---|---|
-| Модуль 1 | 1 465 | Physical Layer & Kernel |
-| Модуль 2 | 2 125 | Congestion Control |
-| Модуль 3 | 753 | TCP State Machine |
-| Модуль 4 | 792 | Traffic Control & Tuning |
-| Модуль 5 | 933 | IP Protocol + IPv6 |
-| Модуль 6 | 444 | Application Architecture |
-| Модуль 7 | 452 | QUIC / HTTP/3 |
-| Модуль 8 | 1 581 | EVE-NG Lab & Chaos Engineering |
-| Модуль 9 | 1 089 | Windows Server Stack |
-| Модуль 10 | 1 398 | Windows Client Networking |
-| Lab Setup | 1 062 | Базовый полигон |
-| **Итого** | **12 094** | |
-
----
-
 ## Как читать
 
-**Путь сетевого инженера (Linux):**
-`Модуль 1 → 2 → 3 → 4 → 5 → Lab Setup`
+**Путь пакета (последовательно):**
+`Модуль 1 (NIC) → 2 (IP) → 3 (TCP) → 4 (CC) → 5 (TC) → 6 (App) → 7 (QUIC)`
 
 **Путь .NET-разработчика:**
-`Модуль 3 → 2 → 6 → 7 → 8 (Chaos Engineering)`
+`Модуль 3 (TCP) → 4 (CC) → 6 (App Architecture) → 7 (QUIC) → 10 (Chaos Lab)`
 
 **Путь Windows-админа:**
-`Модуль 9 → 10 → 3 (TCP State Machine для понимания ss/netstat)`
+`Модуль 8 (Server Stack) → 9 (Client) → 3 (TCP State Machine для понимания netstat)`
 
-**Путь DevOps-инженера:**
-`Модуль 8 (EVE-NG Lab) → 4 (TC/Tuning) → 1 (eBPF) → 2 (BBR)`
+**Путь DevOps/SRE:**
+`Модуль 10 (EVE-NG Lab) → 5 (TC/Tuning) → 1 (eBPF) → 4 (BBR)`
 
 ---
 

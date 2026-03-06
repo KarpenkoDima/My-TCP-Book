@@ -1,4 +1,4 @@
-# Модуль 8: EVE-NG Lab — Боевой полигон для .NET и Chaos Engineering
+# Модуль 10: EVE-NG Lab — Боевой полигон для .NET и Chaos Engineering
 
 *«Если ты не можешь сломать свой сервис в лабе — production сделает это за тебя».*
 
@@ -14,7 +14,7 @@
 
 ---
 
-## Часть 8.1: Архитектура стенда
+## Часть 10.1: Архитектура стенда
 
 ### Топология
 
@@ -90,7 +90,7 @@
 
 ---
 
-## Часть 8.2: Создание топологии в EVE-NG
+## Часть 10.2: Создание топологии в EVE-NG
 
 ### Шаг 1: Подготовка образов
 
@@ -138,7 +138,7 @@ cache-redis:     eth0 → mgmt-oob,  eth1 → net-data
 
 ---
 
-## Часть 8.3: Базовая настройка Linux-узлов
+## Часть 10.3: Базовая настройка Linux-узлов
 
 ### Netplan для всех Ubuntu-узлов
 
@@ -208,7 +208,7 @@ sudo netplan apply
 
 # Этап 1: Маршрутизация — OSPF между WAN-роутерами
 
-## Часть 8.4: Конфигурация VyOS-роутеров
+## Часть 10.4: Конфигурация VyOS-роутеров
 
 Используем VyOS 1.4 — полноценный сетевой ОС на базе Linux, бесплатный, идеально подходит для EVE-NG. Конфиги ниже — для VyOS. Альтернативные конфиги для Cisco IOL даны отдельно.
 
@@ -431,7 +431,7 @@ traceroute 172.16.1.11
 
 # Этап 2: DevOps Автоматизация — Ansible
 
-## Часть 8.5: Inventory
+## Часть 10.5: Inventory
 
 ### Структура проекта
 
@@ -601,7 +601,7 @@ app_sysctl:
   net.ipv4.tcp_max_syn_backlog: 65535
   # TIME_WAIT reuse (Модуль 3)
   net.ipv4.tcp_tw_reuse: 1
-  # BBR congestion control (Модуль 2)
+  # BBR congestion control (Модуль 4)
   net.ipv4.tcp_congestion_control: bbr
   net.core.default_qdisc: fq
 ```
@@ -623,7 +623,7 @@ redis_maxmemory_policy: "allkeys-lru"
 
 ---
 
-## Часть 8.6: Playbooks
+## Часть 10.6: Playbooks
 
 ### Playbook 1: Базовая настройка Linux (01-base-setup.yml)
 
@@ -1003,7 +1003,7 @@ ansible linux_servers -m ping
 
 # Этап 3: Chaos Engineering — Внедрение сбоев
 
-## Часть 8.7: Теория — Где внедрять сбои
+## Часть 10.7: Теория — Где внедрять сбои
 
 Внедрять latency/loss можно в двух местах:
 
@@ -1125,7 +1125,7 @@ ansible linux_servers -m ping
 
 ---
 
-## Часть 8.8: Детальный разбор Chaos-сценариев
+## Часть 10.8: Детальный разбор Chaos-сценариев
 
 ### Сценарий 1: High Latency (150ms + 50ms jitter)
 
@@ -1356,7 +1356,7 @@ var channel = Channel.CreateBounded<Order>(new BoundedChannelOptions(1000)
 
 ---
 
-## Часть 8.9: VyOS-native Traffic Policy (альтернатива tc)
+## Часть 10.9: VyOS-native Traffic Policy (альтернатива tc)
 
 Если хотите управлять chaos через VyOS CLI вместо прямых tc-команд:
 
@@ -1369,7 +1369,7 @@ set traffic-policy shaper WAN-SHAPE default bandwidth '10mbit'
 set traffic-policy shaper WAN-SHAPE default burst '15k'
 set traffic-policy shaper WAN-SHAPE default queue-type 'fq-codel'
 # fq-codel здесь — чтобы при shaping работала fair queuing
-# и не было голодания TCP-потоков (см. Модуль 4 книги)
+# и не было голодания TCP-потоков (см. Модуль 5 книги)
 
 # Применяем к WAN-интерфейсу
 set interfaces ethernet eth2 traffic-policy out 'WAN-SHAPE'
@@ -1394,7 +1394,7 @@ commit
 
 ---
 
-## Часть 8.10: Мониторинг и Observability
+## Часть 10.10: Мониторинг и Observability
 
 ### Prometheus + Grafana на ansible-master (опционально)
 
@@ -1470,7 +1470,7 @@ cd /opt/monitoring && docker compose up -d
 
 ---
 
-## Часть 8.11: Скрипт полного развёртывания
+## Часть 10.11: Скрипт полного развёртывания
 
 Финальный скрипт для запуска всего стенда с нуля:
 
@@ -1576,6 +1576,6 @@ echo "============================================"
 
 ---
 
-**Предыдущий модуль:** [Модуль 7: QUIC и HTTP/3](Module-07-QUIC-HTTP3.md) — почему TCP становится legacy для Web.
+**Предыдущий модуль:** [Модуль 9: Windows Client Networking](Module-09-Windows-Client-Networking.md) — Wi-Fi, DNS Client, VPN и «Нет интернета».
 
 **Дополнительный ресурс:** [Lab-Setup.md](Lab-Setup.md) — базовый лаб на Network Namespaces и VMware (без EVE-NG).

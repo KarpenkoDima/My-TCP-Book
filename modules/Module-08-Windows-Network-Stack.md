@@ -1,4 +1,4 @@
-# Модуль 9: Windows Network Stack Internals — NDIS, RSS и траблшутинг на уровне ядра
+# Модуль 8: Windows Network Stack Internals — NDIS, RSS и траблшутинг на уровне ядра
 
 *«Когда стандартные логи молчат, а Performance Monitor показывает "всё нормально" — вы ещё даже не начали диагностику».*
 
@@ -14,7 +14,7 @@
 
 ---
 
-## Часть 9.1: Ментальная модель — Конвейер обработки пакетов
+## Часть 8.1: Ментальная модель — Конвейер обработки пакетов
 
 ### Аналогия: Аэропорт
 
@@ -40,7 +40,7 @@
 
 ---
 
-## Часть 9.2: Архитектура NDIS 6.x — Deep Dive
+## Часть 8.2: Архитектура NDIS 6.x — Deep Dive
 
 ### NDIS: Network Driver Interface Specification
 
@@ -154,7 +154,7 @@ Get-CimInstance -ClassName MSFT_NetAdapter -Namespace root/StandardCimv2 |
 
 ---
 
-## Часть 9.3: Receive Side Scaling (RSS) — Многоядерная обработка пакетов
+## Часть 8.3: Receive Side Scaling (RSS) — Многоядерная обработка пакетов
 
 ### Проблема: Один процессор на весь трафик
 
@@ -302,7 +302,7 @@ $counters.CounterSamples | Where-Object { $_.CookedValue -gt 5 } |
 
 ---
 
-## Часть 9.4: VMQ и Dynamic VMQ (dVMQ) — RSS для виртуализации
+## Часть 8.4: VMQ и Dynamic VMQ (dVMQ) — RSS для виртуализации
 
 ### Проблема: Hyper-V убивает RSS
 
@@ -369,7 +369,7 @@ Set-VMNetworkAdapter -VMName "app-01" -VrssEnabled $true
 
 ---
 
-## Часть 9.5: Receive Segment Coalescing (RSC) — Пакетный GRO
+## Часть 8.5: Receive Segment Coalescing (RSC) — Пакетный GRO
 
 ### Проблема: Миллионы мелких пакетов
 
@@ -419,7 +419,7 @@ Get-NetAdapterStatistics -Name "Ethernet0" |
 
 ---
 
-## Часть 9.6: SR-IOV — Обход гипервизора (Nuclear Option)
+## Часть 8.6: SR-IOV — Обход гипервизора (Nuclear Option)
 
 ### Проблема: vSwitch = bottleneck
 
@@ -509,7 +509,7 @@ Get-NetAdapter | Where-Object { $_.InterfaceDescription -match "Virtual Function
 
 ---
 
-## Часть 9.7: Windows Filtering Platform (WFP) — Файрвол изнутри
+## Часть 8.7: Windows Filtering Platform (WFP) — Файрвол изнутри
 
 ### Архитектура WFP
 
@@ -592,6 +592,74 @@ Get-WinEvent -LogName Security -FilterXPath "*[System[EventID=5157]]" -MaxEvents
     # Погуглите GUID → найдёте: CrowdStrike / Palo Alto GP / etc.
     ```
 
+### EDR-агенты в WFP: Скрытый убийца производительности
+
+90% необъяснимых сетевых задержек на корпоративных машинах создают **EDR-агенты** (CrowdStrike Falcon, Microsoft Defender for Endpoint, Carbon Black, Kaspersky), которые регистрируют **WFP callout drivers** на каждом уровне стека.
+
+**Как EDR замедляет сеть:**
+
+```
+Каждый пакет (и входящий, и исходящий) проходит цепочку:
+
+  Пакет → NDIS miniport
+       → WFP INBOUND_NETWORK callout (EDR: проверка IP-репутации)
+       → WFP INBOUND_TRANSPORT callout (EDR: DPI, сигнатуры)
+       → WFP ALE_AUTH_RECV_ACCEPT callout (EDR: проверка процесса)
+       → WFP STREAM callout (EDR: инспекция payload — TLS intercept!)
+       → TCP/IP стек → приложение
+
+Каждый callout — это синхронный вызов в kernel mode.
+При 100K пакетов/сек даже 1µs на callout = 100ms/сек CPU overhead.
+```
+
+**Диагностика: Какой EDR тормозит**
+
+```powershell
+# === Шаг 1: Найти все WFP callout drivers ===
+netsh wfp show state file=wfp_state.xml
+Select-String -Path wfp_state.xml -Pattern "callout" -Context 0,5
+
+# === Шаг 2: Посмотреть загруженные WFP filter drivers ===
+fltMC.exe
+# Если видите csagent.sys (CrowdStrike), klif.sys (Kaspersky),
+# WdFilter.sys (Defender) — это ваши подозреваемые.
+
+# === Шаг 3: Измерить DPC/ISR latency от callout drivers ===
+# Скачайте xperf (Windows ADK) или используйте WPA:
+xperf -on PROC_THREAD+LOADER+DPC+INTERRUPT -stackwalk DPC+INTERRUPT
+# Подождите 30 секунд под нагрузкой
+xperf -d callout_trace.etl
+# Откройте в WPA → DPC/ISR → Sort by Duration
+# Ищите DPC с module = csagent.sys / klif.sys / WdFilter.sys
+
+# === Шаг 4: Быстрый тест — отключение и сравнение ===
+# ТОЛЬКО в тестовой среде! Временно отключаем WFP netevents:
+netsh wfp set options netevents = off
+# Запускаем бенчмарк (iperf3) до и после
+# Разница > 15%? Callout driver — виновник.
+```
+
+**Production workaround (не отключая EDR):**
+
+```powershell
+# Исключения для высоконагруженных процессов
+# CrowdStrike: Falcon console → Exclusions → Process: sqlservr.exe, w3wp.exe
+# Defender:
+Add-MpPreference -ExclusionProcess "sqlservr.exe"
+Add-MpPreference -ExclusionProcess "w3wp.exe"
+
+# Перенос инспекции на уровень NETWORK (дешевле, чем STREAM):
+# Попросите вендора EDR отключить STREAM-level inspection для серверов
+# (L7 DPI на SQL-сервере, обрабатывающем 50K запросов/сек — безумие)
+```
+
+> **Реальный кейс:**
+> SQL Server: 50K TCP-соединений, latency p99 = 45ms. После обновления
+> CrowdStrike Falcon sensor (новая версия добавила STREAM callout для
+> TLS inspection) — p99 скакнул до 120ms. В `xperf` trace:
+> `csagent.sys` DPC занимал 35% CPU на каждом ядре.
+> Решение: исключение `sqlservr.exe` в Falcon console → p99 вернулся к 48ms.
+
 ### pktmon: Встроенный packet sniffer (Windows Server 2019+)
 
 `pktmon` — встроенный аналог `tcpdump`, работающий на **всех уровнях** стека. Показывает, где именно пакет дропается.
@@ -637,7 +705,7 @@ pktmon pcapng PktMon.etl -o capture.pcapng
 
 ---
 
-## Часть 9.8: tcpip.sys — TCP/IP стек Windows изнутри
+## Часть 8.8: tcpip.sys — TCP/IP стек Windows изнутри
 
 ### Congestion Control в Windows
 
@@ -741,7 +809,7 @@ Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\AFD\Parameters" 
 
 ---
 
-## Часть 9.9: Хирургическая диагностика — ETW, xperf, WPA
+## Часть 8.9: Хирургическая диагностика — ETW, xperf, WPA
 
 ### ETW: Event Tracing for Windows
 
@@ -853,7 +921,7 @@ procdump -ma -m 2048 System  # Дамп System при > 2GB committed
 
 ---
 
-## Часть 9.10: Hardcore Lab — Chaos Engineering на Windows
+## Часть 8.10: Hardcore Lab — Chaos Engineering на Windows
 
 ### Сценарий: Диагностика «медленной сети» на Hyper-V хосте
 
@@ -947,7 +1015,7 @@ iperf3 -c 172.16.2.20 -t 30 -P 4
 
 ---
 
-## Часть 9.11: Чеклист для Production Windows Server
+## Часть 8.11: Чеклист для Production Windows Server
 
 ### Сетевой стек — обязательные проверки
 
@@ -1083,7 +1151,7 @@ Invoke-NetworkStackAudit -AdapterName "Ethernet0"
 
 **Связь с основной книгой:**
 - RSS в Windows ≈ RSS/RPS в Linux (Модуль 1)
-- WFP ≈ iptables/nftables + netfilter (Модуль 5, IP)
-- TCP settings ≈ sysctl tuning (Модуль 4, TC/Tuning)
+- WFP ≈ iptables/nftables + netfilter (Модуль 2, IP)
+- TCP settings ≈ sysctl tuning (Модуль 5, TC/Tuning)
 - DPC/ISR ≈ SoftIRQ/NAPI (Модуль 1)
-- pktmon ≈ tcpdump + eBPF tracing (Модуль 4)
+- pktmon ≈ tcpdump + eBPF tracing (Модуль 5)

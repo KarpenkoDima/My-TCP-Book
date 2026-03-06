@@ -1,4 +1,4 @@
-# Модуль 10: Windows Client Network Internals — Wi-Fi, DNS Client, VPN и «Нет интернета»
+# Модуль 9: Windows Client Network Internals — Wi-Fi, DNS Client, VPN и «Нет интернета»
 
 *«Жёлтый треугольник на иконке сети — это не диагноз. Это симптом. А причина может быть в любом из 47 компонентов между вашим браузером и роутером».*
 
@@ -18,7 +18,7 @@
 
 ---
 
-## Часть 10.1: Анатомия сетевого подключения на клиенте
+## Часть 9.1: Анатомия сетевого подключения на клиенте
 
 ### Стек компонентов (от пользователя до провода)
 
@@ -62,7 +62,7 @@
 
 ---
 
-## Часть 10.2: Wi-Fi Stack — 802.11 изнутри
+## Часть 9.2: Wi-Fi Stack — 802.11 изнутри
 
 ### Архитектура Windows Wi-Fi
 
@@ -327,7 +327,7 @@ netsh trace convert input=C:\traces\wifi_diag.etl output=C:\traces\wifi_diag.txt
 
 ---
 
-## Часть 10.3: DNS Client — Самый непонятый компонент Windows
+## Часть 9.3: DNS Client — Самый непонятый компонент Windows
 
 ### Как Windows резолвит DNS (реальный путь)
 
@@ -575,7 +575,7 @@ Set-DnsClient -InterfaceAlias "Ethernet" `
 
 ---
 
-## Часть 10.4: NCSI — Почему Windows говорит «Нет интернета»
+## Часть 9.4: NCSI — Почему Windows говорит «Нет интернета»
 
 ### Как NCSI определяет подключение
 
@@ -707,7 +707,7 @@ Set-ItemProperty $ncsiPath -Name "EnableActiveProbing" -Value 0 -Type DWord
 
 ---
 
-## Часть 10.5: NLA — Network Location Awareness (Domain / Private / Public)
+## Часть 9.5: NLA — Network Location Awareness (Domain / Private / Public)
 
 ### Почему это критично
 
@@ -803,7 +803,7 @@ Get-WinEvent -LogName "Microsoft-Windows-NetworkProfile/Operational" |
 
 ---
 
-## Часть 10.6: VPN Stack — Always On VPN, IKEv2, Split Tunneling
+## Часть 9.6: VPN Stack — Always On VPN, IKEv2, Split Tunneling
 
 ### Архитектура VPN в Windows
 
@@ -917,7 +917,7 @@ ping -f -l 1300 10.0.0.1    # Если не проходит при 1400, про
 
 ---
 
-## Часть 10.7: Сетевые сбросы и восстановление
+## Часть 9.7: Сетевые сбросы и восстановление
 
 ### «Ядерная кнопка»: Полный сброс сетевого стека
 
@@ -978,7 +978,7 @@ Get-PnpDevice -Class Net -Status OK |
 
 ---
 
-## Часть 10.8: ETW-диагностика для клиентских проблем
+## Часть 9.8: ETW-диагностика для клиентских проблем
 
 ### Сценарий: «Интернет тормозит»
 
@@ -1061,7 +1061,7 @@ while ($true) {
 
 ---
 
-## Часть 10.9: Типичные клиентские проблемы — Cookbook
+## Часть 9.9: Типичные клиентские проблемы — Cookbook
 
 ### Проблема 1: «Wi-Fi подключён, но страницы не грузятся»
 
@@ -1163,7 +1163,7 @@ Get-NetAdapterAdvancedProperty -Name "Wi-Fi" |
 
 ---
 
-## Часть 10.10: Скрипт полной диагностики клиентской машины
+## Часть 9.10: Скрипт полной диагностики клиентской машины
 
 ```powershell
 function Invoke-ClientNetworkDiag {
@@ -1388,11 +1388,11 @@ Invoke-ClientNetworkDiag
 
 **Связь с модулями книги:**
 - Wi-Fi Power Management ≈ NIC power states (Модуль 1)
-- DNS resolution path ≈ IP routing decision (Модуль 5)
-- VPN IPsec/IKEv2 ≈ IPsec/XFRM (Модуль 5, часть 5.8)
+- DNS resolution path ≈ IP routing decision (Модуль 2)
+- VPN IPsec/IKEv2 ≈ IPsec/XFRM (Модуль 2, часть 2.8)
 - TCP retransmissions ≈ RTO/SACK/RACK (Модуль 3)
 - Wi-Fi roaming ≈ Connection migration в QUIC (Модуль 7)
-- NLA/NCSI ≈ Health checks / circuit breaker patterns (Модуль 8)
-- NDIS filters ≈ netfilter/iptables chains (Модуль 4)
+- NLA/NCSI ≈ Health checks / circuit breaker patterns (Модуль 10)
+- NDIS filters ≈ netfilter/iptables chains (Модуль 5)
 
-**Предыдущий модуль:** [Модуль 9: Windows Network Stack Internals](Module-09-Windows-Network-Stack.md) — серверный стек, NDIS, RSS, SR-IOV.
+**Предыдущий модуль:** [Модуль 8: Windows Network Stack Internals](Module-08-Windows-Network-Stack.md) — серверный стек, NDIS, RSS, SR-IOV.
