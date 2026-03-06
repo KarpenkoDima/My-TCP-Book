@@ -88,6 +88,139 @@
 
 Остаётся ~15 GB RAM для EVE-NG host и гипервизора — более чем достаточно для Core i9 + 32 GB.
 
+### Развёртывание EVE-NG на Windows (VMware Workstation)
+
+EVE-NG — это кастомная Ubuntu, которая запускается как VM. На Windows вам нужен гипервизор. VMware Workstation — оптимальный выбор: полная поддержка nested virtualization, стабильная работа QEMU-нод внутри EVE-NG.
+
+**Требования к Windows-хосту:**
+
+| Параметр | Минимум | Рекомендуемо |
+|---|---|---|
+| CPU | Core i7 (VT-x + EPT) | Core i9 12+ ядер |
+| RAM | 24 GB | 32 GB+ |
+| Диск | 200 GB SSD | 500 GB NVMe |
+| Гипервизор | VMware Workstation 16+ | VMware Workstation 17 Pro |
+| Windows | 10/11 Pro (64-bit) | Windows 11 Pro |
+
+**Шаг 1: Проверка и настройка BIOS**
+
+```
+# В BIOS/UEFI включите:
+Intel VT-x (Virtualization Technology)         → Enabled
+Intel VT-d (Directed I/O)                      → Enabled
+Intel EPT (Extended Page Tables)               → Enabled  ← критично для nested virt!
+
+# Проверка из PowerShell (уже в Windows):
+systeminfo | findstr /i "Hyper-V"
+# Если видите "A hypervisor has been detected" — Hyper-V включён, нужно отключить.
+```
+
+**Шаг 2: Отключение Hyper-V (если включён)**
+
+Hyper-V конфликтует с VMware Workstation. Если включён — VMware падает на ~40% производительности (работает через WHP бэкенд вместо нативного).
+
+```powershell
+# Отключаем Hyper-V, VBS, Credential Guard
+bcdedit /set hypervisorlaunchtype off
+
+# Отключаем компоненты Windows
+Disable-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V-All -NoRestart
+Disable-WindowsOptionalFeature -Online -FeatureName VirtualMachinePlatform -NoRestart
+Disable-WindowsOptionalFeature -Online -FeatureName HypervisorPlatform -NoRestart
+
+# Отключаем Device Guard / Credential Guard (GPO или реестр)
+reg add "HKLM\SYSTEM\CurrentControlSet\Control\DeviceGuard" /v EnableVirtualizationBasedSecurity /t REG_DWORD /d 0 /f
+
+# Перезагрузка обязательна
+Restart-Computer
+```
+
+> **Внимание:** Отключение Hyper-V отключает WSL2, Windows Sandbox и Docker Desktop (Hyper-V backend). Если вам нужен Docker — используйте Docker внутри EVE-NG VM или переключитесь на Docker Desktop с WSL2 backend, но тогда VMware будет работать медленнее.
+
+**Шаг 3: Импорт EVE-NG OVA в VMware Workstation**
+
+```
+1. Скачайте EVE-NG Community OVA:
+   https://www.eve-ng.net/index.php/download/
+
+2. VMware Workstation → File → Open → выберите .ova файл
+
+3. Настройки VM (Edit Virtual Machine Settings):
+   - Processors: 8+ cores
+   - Memory: 24576 MB (24 GB) — под наш стенд с 7 узлами
+   - Hard Disk: расширьте до 200 GB (Expand Disk)
+   - Network Adapter 1: NAT (для доступа к web-интерфейсу EVE-NG)
+   - Network Adapter 2: Host-Only (для management OOB)
+
+4. КРИТИЧНО — включите nested virtualization:
+   VM → Settings → Processors →
+   ☑ Virtualize Intel VT-x/EPT or AMD-V/RVI
+   ☑ Virtualize CPU performance counters
+
+   Или в .vmx файле добавьте:
+   vhv.enable = "TRUE"
+   vpmc.enable = "TRUE"
+```
+
+**Шаг 4: Первый запуск и настройка сети**
+
+```bash
+# После запуска VM — логинимся (root / eve)
+# EVE-NG запустит первоначальный wizard:
+# - Hostname: eve-ng
+# - Domain: lab.local
+# - Static IP: оставьте DHCP (NAT) или задайте статику
+# - NTP, proxy — по вкусу
+
+# Проверяем nested virtualization:
+egrep -c '(vmx|svm)' /proc/cpuinfo
+# Должно вернуть число > 0 (количество ядер с VT-x)
+
+# Если 0 — nested virt не работает, QEMU-ноды будут критично медленными!
+
+# Узнаём IP для доступа из браузера:
+ip addr show eth0 | grep inet
+# Открываем в браузере: http://<IP>
+# Логин: admin / eve
+```
+
+**Шаг 5: Проброс портов для SSH (опционально)**
+
+Для удобного доступа к нодам из Windows Terminal:
+
+```powershell
+# В VMware: Settings → Network Adapter (NAT) → Advanced → Port Forwarding:
+# Host 2222 → Guest 22 (SSH к EVE-NG host)
+# Host 8080 → Guest 80 (Web UI)
+
+# Теперь из Windows:
+ssh -p 2222 root@127.0.0.1
+
+# SSH к нодам внутри EVE-NG (через ProxyJump):
+# ~/.ssh/config
+# Host eve
+#     HostName 127.0.0.1
+#     Port 2222
+#     User root
+#
+# Host app-01
+#     HostName 10.99.0.11
+#     ProxyJump eve
+#     User root
+```
+
+**Сравнение гипервизоров для EVE-NG на Windows:**
+
+| | VMware Workstation | VirtualBox | Hyper-V |
+|---|---|---|---|
+| Nested virt | Полная (VT-x passthrough) | Частичная (медленная) | Да, но конфликт с VMware |
+| Производительность | Отличная | Средняя | Хорошая |
+| QEMU-ноды в EVE-NG | Работают нативно | Работают, но ~2x медленнее | Работают |
+| Стоимость | $199 Pro (бесплатная Personal) | Бесплатно | Встроен в Windows Pro |
+| Рекомендация | **Первый выбор** | Для тестов | Если нужен WSL2/Docker |
+
+> **Bare metal — лучший вариант:** Если есть выделенная машина — ставьте EVE-NG ISO напрямую на железо (без VMware). Это убирает overhead гипервизора и даёт ~15% больше производительности. Идеально для постоянной лабы.
+
 ---
 
 ## Часть 10.2: Создание топологии в EVE-NG

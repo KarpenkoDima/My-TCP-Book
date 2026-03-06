@@ -167,6 +167,7 @@
 #### [Модуль 10: EVE-NG Lab](modules/Module-10-EVE-NG-Lab.md)
 *«Боевой полигон для .NET и Chaos Engineering»*
 
+- **Развёртывание на Windows** (VMware Workstation, nested virt, отключение Hyper-V)
 - **Этап 1 — Инфраструктура:** 7 узлов, 4 зоны, OSPF (VyOS + Cisco IOL)
   - 10.1 Архитектура стенда (топология, адресная схема, ресурсы VM)
   - 10.2 Создание топологии в EVE-NG
