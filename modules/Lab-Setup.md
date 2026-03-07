@@ -824,6 +824,423 @@ traceroute -n 192.168.50.10   # Два хопа через Router
 
 ---
 
+## Уровень 2.5: Физический стенд на домашнем оборудовании
+
+### Зачем
+
+VMware-стенд (Уровень 2) — отличная песочница, но трафик в ней никогда не покидает RAM гипервизора. Вы не видите реальных очередей на порту, реального ARP, реального влияния коллизий в полудуплексе, реального поведения TCP через настоящий роутер с аппаратным QoS.
+
+Физический стенд на домашнем оборудовании даёт:
+- **Реальные задержки.** Пакеты проходят через PHY, MAC, буферы коммутатора, очереди роутера. RTT 0.3–0.8ms вместо 0.02ms в VMware.
+- **Реальные очереди MikroTik.** Queue Tree / Simple Queues / HTB на RouterOS — это настоящий traffic shaping, который используют ISP. Не эмуляция через `tc netem`.
+- **Реальные ограничения.** 100 Mbps порты RB951 — это не баг, а фича: congestion становится видимым на обычном `iperf3`, без искусственных ограничений.
+- **VLAN, firewall, NAT на железе.** CRS326 с аппаратной коммутацией VLAN + MikroTik firewall = среда, максимально приближённая к продакшену.
+
+### Имеющееся оборудование
+
+| Устройство | Роль в стенде | Ключевые характеристики |
+|---|---|---|
+| **MikroTik CRS326-24G-2S+RM** | Core Switch | 24× GbE, 2× SFP+ (10G), SwOS/RouterOS, VLAN, mirror port |
+| **MikroTik hAP ac2** | Router / WAN emulator | 5× GbE, RouterOS 7, Wi-Fi ac, IPsec HW, 128MB RAM |
+| **MikroTik RB951Ui-2HnD** | Router / Bandwidth limiter | 5× 100Mbps FE, RouterOS, PoE out, 128MB RAM |
+| **Ноутбук Win10** (i7, 8GB, SSD) | Client / Wireshark station | Основная рабочая станция, генератор трафика |
+| **Ноутбук Ubuntu** (Intel, 4GB, SSD) | Server / DUT | Приёмник трафика, iperf3/nginx сервер |
+| **Ноутбук Win/Linux** (i3, 4GB, SSD) | Monitor / 2nd client | Захват трафика, второй источник нагрузки |
+
+### Топология стенда
+
+```
+                         ┌─────────────────────────────────────────┐
+                         │     MikroTik CRS326-24G-2S+RM          │
+                         │         (Core Switch)                   │
+                         │                                         │
+                         │  Port 1    Port 2    Port 3    Port 4   │
+                         │  VLAN 10   VLAN 10   VLAN 20   VLAN 20  │
+                         └────┬─────────┬─────────┬─────────┬──────┘
+                              │         │         │         │
+                              │         │         │         │
+                         ┌────┴────┐    │    ┌────┴────┐    │
+                         │ Laptop  │    │    │ Laptop  │    │
+                         │ Win10   │    │    │ Ubuntu  │    │
+                         │ (Client)│    │    │(Server) │    │
+                         │ .10.10  │    │    │ .20.10  │    │
+                         └─────────┘    │    └─────────┘    │
+                                        │                   │
+                              ┌─────────┴───────────────────┴──────┐
+                              │       MikroTik hAP ac2             │
+                              │     (Router / WAN Emulator)        │
+                              │                                     │
+                              │  ether2          ether3             │
+                              │  192.168.10.1    192.168.20.1       │
+                              │                                     │
+                              │  ether1 ──── ISP / Internet         │
+                              └─────────────────────────────────────┘
+
+  Подсеть Client: 192.168.10.0/24  (VLAN 10)
+  Подсеть Server: 192.168.20.0/24  (VLAN 20)
+
+  Опционально:
+                         ┌─────────────────────────────────────────┐
+                         │  MikroTik RB951Ui-2HnD                  │
+                         │  (WAN bottleneck — 100 Mbps ports)      │
+                         │                                          │
+                         │  Включается между hAP ac2 и CRS326     │
+                         │  для эмуляции медленного WAN-канала      │
+                         └─────────────────────────────────────────┘
+
+  3-й ноутбук:
+  - Подключается к CRS326 mirror port для пассивного захвата трафика
+  - Или как второй клиент для тестирования fairness (два потока конкурируют)
+```
+
+### Шаг 1: Настройка CRS326 (Core Switch)
+
+CRS326 работает в режиме SwOS (аппаратная коммутация) или RouterOS (программная). Для нашего стенда используем **RouterOS** — он гибче и позволяет настроить port mirroring.
+
+```
+# Подключаемся к CRS326 (по умолчанию 192.168.88.1, admin без пароля)
+# Через WinBox или SSH
+
+# --- Создаём VLAN-ы ---
+
+# Bridge для коммутации
+/interface bridge
+add name=bridge1 vlan-filtering=no
+
+# Добавляем порты в bridge
+/interface bridge port
+add bridge=bridge1 interface=ether1 pvid=10
+add bridge=bridge1 interface=ether2 pvid=10
+add bridge=bridge1 interface=ether3 pvid=20
+add bridge=bridge1 interface=ether4 pvid=20
+
+# Настраиваем VLAN на bridge
+/interface bridge vlan
+add bridge=bridge1 tagged=bridge1 untagged=ether1,ether2 vlan-ids=10
+add bridge=bridge1 tagged=bridge1 untagged=ether3,ether4 vlan-ids=20
+
+# Включаем VLAN filtering (делаем последним — иначе потеряете доступ!)
+/interface bridge
+set bridge1 vlan-filtering=yes
+
+# --- Port Mirroring (для 3-го ноутбука с Wireshark) ---
+# Зеркалируем трафик с ether1 (Client) на ether5 (Monitor)
+/interface ethernet switch
+set ingress-mirror-src=ether1 egress-mirror-src=ether1 mirror-target=ether5
+```
+
+**Важно:** Перед включением `vlan-filtering=yes` убедитесь, что у вас есть доступ к CRS326 через порт, который не будет заблокирован. Лучше всего подключаться через ether24 или через MAC-адрес в WinBox.
+
+**Верификация:**
+
+```
+# Проверяем VLAN
+/interface bridge vlan print
+
+# Проверяем, что порты в правильных VLAN
+/interface bridge port print
+
+# Проверяем mirror
+/interface ethernet switch print
+```
+
+### Шаг 2: Настройка hAP ac2 (Router)
+
+hAP ac2 — основной маршрутизатор. Два интерфейса смотрят в разные VLAN через CRS326, один — в интернет.
+
+```
+# Сбрасываем к заводским настройкам (если нужно)
+/system reset-configuration no-defaults=yes
+
+# --- Интерфейсы ---
+# ether1 → ISP (WAN, DHCP client)
+# ether2 → CRS326 (VLAN 10, подсеть клиента)
+# ether3 → CRS326 (VLAN 20, подсеть сервера)
+
+# --- IP-адреса ---
+/ip address
+add address=192.168.10.1/24 interface=ether2
+add address=192.168.20.1/24 interface=ether3
+
+# WAN — DHCP от ISP
+/ip dhcp-client
+add interface=ether1 disabled=no
+
+# --- Маршрутизация (уже работает, hAP ac2 — роутер из коробки) ---
+
+# --- NAT для доступа в интернет ---
+/ip firewall nat
+add chain=srcnat out-interface=ether1 action=masquerade
+
+# --- Firewall — разрешаем forwarding между подсетями ---
+/ip firewall filter
+add chain=forward action=accept src-address=192.168.10.0/24 dst-address=192.168.20.0/24
+add chain=forward action=accept src-address=192.168.20.0/24 dst-address=192.168.10.0/24
+add chain=forward action=accept connection-state=established,related
+
+# --- DNS ---
+/ip dns
+set allow-remote-requests=yes servers=8.8.8.8,8.8.4.4
+```
+
+**Верификация:**
+
+```
+# Проверяем интерфейсы
+/ip address print
+
+# Проверяем маршрут в интернет
+/ping 8.8.8.8 count=3
+
+# Проверяем маршруты
+/ip route print
+```
+
+### Шаг 3: Настройка ноутбуков
+
+**Client (Windows 10, i7, 8GB):**
+
+```powershell
+# Настройка через GUI: Network Settings → Ethernet → IP Settings → Manual
+# IP:      192.168.10.10
+# Mask:    255.255.255.0
+# Gateway: 192.168.10.1
+# DNS:     192.168.10.1 (или 8.8.8.8)
+
+# Или через PowerShell (от администратора):
+New-NetIPAddress -InterfaceAlias "Ethernet" -IPAddress 192.168.10.10 -PrefixLength 24 -DefaultGateway 192.168.10.1
+Set-DnsClientServerAddress -InterfaceAlias "Ethernet" -ServerAddresses 8.8.8.8,8.8.4.4
+
+# Проверка
+ping 192.168.10.1      # Gateway
+ping 192.168.20.10     # Server (через роутер)
+ping 8.8.8.8           # Internet
+tracert 192.168.20.10  # Должен показать хоп через 192.168.10.1
+```
+
+Установите инструменты:
+- [Wireshark](https://www.wireshark.org/) — захват и анализ трафика
+- [iperf3 для Windows](https://iperf.fr/iperf-download.php) — тестирование пропускной способности
+- [Nmap для Windows](https://nmap.org/download.html) — сканирование сети
+- [PuTTY](https://www.putty.org/) или Windows Terminal + SSH — доступ к MikroTik и Ubuntu
+
+**Server (Ubuntu, 4GB):**
+
+```bash
+# /etc/netplan/01-lab.yaml
+sudo tee /etc/netplan/01-lab.yaml << 'NETPLAN'
+network:
+  version: 2
+  renderer: networkd
+  ethernets:
+    # Имя интерфейса узнайте через: ip link show
+    enp2s0:
+      addresses:
+        - 192.168.20.10/24
+      routes:
+        - to: default
+          via: 192.168.20.1
+      nameservers:
+        addresses:
+          - 8.8.8.8
+          - 8.8.4.4
+      dhcp4: false
+NETPLAN
+
+sudo netplan apply
+
+# Установка инструментов
+sudo apt update && sudo apt install -y \
+    iperf3 iproute2 tcpdump ethtool \
+    bpfcc-tools nmap hping3 tshark python3-scapy \
+    nginx  # веб-сервер для HTTP-тестов
+
+# Проверка
+ping -c 3 192.168.20.1     # Gateway
+ping -c 3 192.168.10.10    # Client
+ping -c 3 8.8.8.8          # Internet
+traceroute -n 192.168.10.10  # Хоп через 192.168.20.1
+```
+
+**Monitor / 2-й клиент (3-й ноутбук):**
+
+Подключается к CRS326 ether5 (mirror port). Этот порт получает копию всего трафика с ether1 — пассивный захват без влияния на сеть.
+
+```bash
+# Если ставите Linux:
+sudo ip addr add 192.168.10.20/24 dev enp2s0   # Или отдельная подсеть
+sudo ip link set enp2s0 up
+
+# Захват зеркалированного трафика:
+sudo tcpdump -i enp2s0 -w /tmp/mirror-capture.pcap
+
+# Или просто Wireshark на этом интерфейсе — видите ВСЁ,
+# что идёт от/к Client, не влияя на трафик.
+```
+
+### Шаг 4: Эмуляция WAN через MikroTik Queue
+
+Главное преимущество MikroTik — **Queue Tree** и **Simple Queues**. Это реальный traffic shaping на аппаратном роутере, а не `tc netem` на Linux.
+
+**Ограничение полосы (Simple Queue):**
+
+```
+# На hAP ac2:
+# Ограничиваем Client до 10 Mbps download / 5 Mbps upload
+/queue simple
+add name=client-limit target=192.168.10.10/32 \
+    max-limit=5M/10M
+
+# Проверяем:
+# На Server: iperf3 -s
+# На Client: iperf3 -c 192.168.20.10
+# Должно показать ~10 Mbps вместо ~940 Mbps
+```
+
+**Эмуляция задержки и потерь (Queue + Mangle):**
+
+RouterOS не имеет встроенного `netem`, но можно эмулировать задержки через queue + burst, а для полноценной эмуляции WAN подключаем RB951 в разрыв.
+
+### Шаг 5: RB951 как WAN Bottleneck
+
+RB951Ui-2HnD имеет 100 Mbps порты — это естественное ограничение пропускной способности. Включаем его между hAP ac2 и CRS326 для эмуляции медленного WAN-канала.
+
+**Топология с RB951:**
+
+```
+  Client ── CRS326 (VLAN 10) ── hAP ac2 ── RB951 ── CRS326 (VLAN 20) ── Server
+                                             │
+                                        100 Mbps
+                                       bottleneck
+```
+
+```
+# На RB951:
+# ether1 → от hAP ac2 ether3
+# ether2 → к CRS326 (VLAN 20)
+
+/ip address
+add address=10.99.0.2/30 interface=ether1
+add address=10.99.0.5/30 interface=ether2
+
+/ip route
+add dst-address=192.168.10.0/24 gateway=10.99.0.1
+add dst-address=192.168.20.0/24 gateway=10.99.0.6
+
+# Эмуляция плохого канала — Queue + Queue Type
+/queue type
+add name=wan-shape kind=pcq pcq-rate=20M pcq-limit=50KiB
+
+/queue simple
+add name=wan-bottleneck target=ether2 \
+    max-limit=20M/20M \
+    queue=wan-shape/wan-shape
+
+# Теперь весь трафик Client→Server ограничен 20 Mbps
+# через реальный 100 Mbps линк с очередями PCQ
+```
+
+### Шаг 6: Лабораторные на физическом стенде
+
+**Лаб 1: Реальный Bandwidth-Delay Product**
+
+```bash
+# На Server:
+iperf3 -s
+
+# На Client (PowerShell или WSL):
+iperf3.exe -c 192.168.20.10 -t 30
+
+# Замеряем RTT:
+ping 192.168.20.10
+# Ожидаем: 0.5–1.5ms (реальный RTT через коммутатор + роутер)
+
+# Сравните с VMware (RTT ~0.02ms) — разница в 25–75 раз!
+```
+
+**Лаб 2: Queue Tree — приоритизация трафика**
+
+```
+# На hAP ac2: SSH-трафик приоритетнее, чем bulk download
+
+# Маркируем пакеты
+/ip firewall mangle
+add chain=forward protocol=tcp dst-port=22 action=mark-packet \
+    new-packet-mark=ssh-traffic passthrough=no
+add chain=forward action=mark-packet \
+    new-packet-mark=bulk-traffic passthrough=no
+
+# Queue Tree с приоритетами
+/queue tree
+add name=total parent=ether3 max-limit=50M
+add name=ssh parent=total packet-mark=ssh-traffic \
+    priority=1 max-limit=50M
+add name=bulk parent=total packet-mark=bulk-traffic \
+    priority=8 max-limit=45M
+```
+
+**Лаб 3: Fairness — два клиента конкурируют**
+
+```bash
+# Client 1 (Win10): iperf3.exe -c 192.168.20.10 -t 60
+# Client 2 (3-й ноутбук): iperf3 -c 192.168.20.10 -t 60 -p 5202
+
+# На Server: два экземпляра iperf3
+iperf3 -s -p 5201 &
+iperf3 -s -p 5202 &
+
+# На Monitor (mirror port): захватываем и анализируем в Wireshark
+# Statistics → I/O Graphs → фильтры по IP
+# Видим, как два потока делят полосу в реальном времени
+```
+
+**Лаб 4: Port mirroring + Wireshark анализ**
+
+```
+# Mirror уже настроен на CRS326 (ether1 → ether5)
+# На 3-м ноутбуке (ether5) запускаем Wireshark:
+
+# Фильтр: tcp.analysis.retransmission
+# Фильтр: tcp.analysis.duplicate_ack
+# Фильтр: tcp.window_size_value < 1000
+
+# Это пассивный захват — вы видите реальные ретрансмиты,
+# дупликаты ACK, window shrink без влияния на трафик.
+```
+
+### Плюсы и минусы
+
+**Плюсы:**
+- **Реальная физика.** Пакеты проходят через PHY, MAC, кабели, буферы коммутатора. RTT, jitter, потери — настоящие.
+- **MikroTik Queue ≈ продакшен ISP.** PCQ, HTB, Queue Tree — те же технологии, что используют провайдеры. Опыт переносится напрямую.
+- **Port mirroring.** Пассивный захват трафика на отдельном ноутбуке — без влияния на сеть, как в реальном NOC.
+- **VLAN на железе.** CRS326 делает аппаратную коммутацию VLAN — zero CPU overhead.
+- **Бюджет ≈ $0.** Всё оборудование уже есть.
+- **100 Mbps RB951 = встроенный bottleneck.** Идеально для наблюдения congestion без искусственных ограничений.
+
+**Минусы:**
+- **Нет `tc netem` на MikroTik.** RouterOS не умеет эмулировать произвольные потери, jitter, reorder. Для этих экспериментов используйте Linux namespace (Уровень 1) на Ubuntu-ноутбуке.
+- **4 GB RAM на двух ноутбуках.** Недостаточно для тяжёлых eBPF-инструментов или сбора больших pcap. Wireshark на 4 GB будет тормозить на захватах > 500 MB.
+- **Нет 10G.** Максимум 1 Gbps через CRS326. Для DPDK/XDP-лабораторных нужны SFP+ NIC и DAC-кабели (Уровень 3).
+- **Физическое пространство.** Три ноутбука + три MikroTik + кабели = нужен стол.
+
+### Матрица: что можно делать на этом стенде
+
+| Лабораторная | Поддержка | Примечание |
+|---|---|---|
+| iperf3 throughput тесты | Да | До 940 Mbps (GbE) |
+| BBR vs CUBIC сравнение | Да | На Ubuntu-ноутбуке (Server) |
+| tc netem (delay, loss, jitter) | Частично | Только на Linux-ноутбуках, не на MikroTik |
+| Traffic shaping (HTB, PCQ) | Да | MikroTik Queue Tree — продакшен-уровень |
+| VLAN, inter-VLAN routing | Да | CRS326 + hAP ac2 |
+| Port mirroring + Wireshark | Да | CRS326 mirror → 3-й ноутбук |
+| Firewall / NAT | Да | MikroTik firewall |
+| eBPF tracing | Частично | Только на Ubuntu-ноутбуке (4GB — ограничение) |
+| DPDK / XDP | Нет | Нет 10G NIC |
+| Wi-Fi тестирование | Да | hAP ac2 имеет 802.11ac |
+
+---
+
 ## Уровень 3: Физические серверы (для 10G+ тестирования)
 
 ### Когда нужен
@@ -934,33 +1351,39 @@ iperf3 -c 10.10.10.2 -t 30 -P 4   # 4 потока для максимально
 
 Какой уровень стенда нужен для каждой лабораторной:
 
-| Задание | Namespace | VMware | Physical |
-|---------|:---------:|:------:|:--------:|
-| **Модуль 1: Физика и Ядро** | | | |
-| Ring buffer stats (`ethtool -S`) | &#10003; | &#10003; | &#10003; |
-| RSS / RPS тестирование | &#10007; | &#10003; | &#10003; |
-| **Модуль 2: IP Protocol** | | | |
-| IP-фрагментация | &#10003; | &#10003; | &#10003; |
-| Policy routing (ip rule) | &#10007; | &#10003; | &#10003; |
-| **Модуль 4: Congestion Control** | | | |
-| BBR vs CUBIC (iperf3 + ss -ti) | &#10003; | &#10003; | &#10003; |
-| CAKE qdisc setup | &#10007; | &#10003; | &#10003; |
-| **Модуль 5: Traffic Control** | | | |
-| tc netem --- chaos engineering | &#10003; | &#10003; | &#10003; |
-| HTB --- production shaping | &#10003; | &#10003; | &#10003; |
-| eBPF tracing (tcplife, tcpretrans) | &#10003; | &#10003; | &#10003; |
-| **Модуль 6: Архитектура приложений** | | | |
-| io_uring echo-сервер | &#10003; | &#10003; | &#10003; |
-| splice / zero-copy proxy | &#10003; | &#10003; | &#10003; |
-| **Модуль 7: QUIC / HTTP3** | | | |
-| QUIC тестирование | &#10003; | &#10003; | &#10003; |
-| **Продвинутые** | | | |
-| Детекция микроберстов | &#10007; | &#10007; | &#10003; |
-| DPDK / XDP | &#10007; | &#10007; | &#10003; |
+| Задание | Namespace | VMware | MikroTik | Physical 10G |
+|---------|:---------:|:------:|:--------:|:------------:|
+| **Модуль 1: Физика и Ядро** | | | | |
+| Ring buffer stats (`ethtool -S`) | &#10003; | &#10003; | &#10003; | &#10003; |
+| RSS / RPS тестирование | &#10007; | &#10003; | &#10003; | &#10003; |
+| **Модуль 2: IP Protocol** | | | | |
+| IP-фрагментация | &#10003; | &#10003; | &#10003; | &#10003; |
+| Policy routing (ip rule) | &#10007; | &#10003; | &#10003; | &#10003; |
+| **Модуль 4: Congestion Control** | | | | |
+| BBR vs CUBIC (iperf3 + ss -ti) | &#10003; | &#10003; | &#10003; | &#10003; |
+| CAKE qdisc setup | &#10007; | &#10003; | &#10007;* | &#10003; |
+| **Модуль 5: Traffic Control** | | | | |
+| tc netem --- chaos engineering | &#10003; | &#10003; | &#10003;** | &#10003; |
+| HTB --- production shaping | &#10003; | &#10003; | &#10003; | &#10003; |
+| MikroTik Queue Tree / PCQ | &#10007; | &#10007; | &#10003; | &#10007; |
+| eBPF tracing (tcplife, tcpretrans) | &#10003; | &#10003; | &#10003;*** | &#10003; |
+| **Модуль 6: Архитектура приложений** | | | | |
+| io_uring echo-сервер | &#10003; | &#10003; | &#10003; | &#10003; |
+| splice / zero-copy proxy | &#10003; | &#10003; | &#10003; | &#10003; |
+| **Модуль 7: QUIC / HTTP3** | | | | |
+| QUIC тестирование | &#10003; | &#10003; | &#10003; | &#10003; |
+| **Продвинутые** | | | | |
+| Port mirroring + Wireshark | &#10007; | &#10007; | &#10003; | &#10003; |
+| VLAN / inter-VLAN routing | &#10007; | &#10007; | &#10003; | &#10003; |
+| Детекция микроберстов | &#10007; | &#10007; | &#10007; | &#10003; |
+| DPDK / XDP | &#10007; | &#10007; | &#10007; | &#10003; |
 
 **Обозначения:**
 - &#10003; --- стенд подходит для выполнения задания
 - &#10007; --- стенд не подходит (результаты будут неадекватными или функциональность недоступна)
+- \* CAKE --- только на Linux-ноутбуках, RouterOS не поддерживает CAKE
+- \*\* tc netem --- на Ubuntu-ноутбуке (через namespace Уровня 1), не на MikroTik
+- \*\*\* eBPF --- ограничено 4 GB RAM на Ubuntu-ноутбуке
 
 **Рекомендация:** Для прохождения 90% лабораторных достаточно **Уровня 2 (VMware)**. Namespace (Уровень 1) покрывает ~70% заданий и идеален для быстрых экспериментов. Физический стенд нужен только для модулей, связанных с реальным железом.
 
@@ -1042,21 +1465,29 @@ which iperf3 ip tc ss tcpdump ethtool nmap hping3 tshark scapy traceroute mtr
 
 ## Краткая справка: Какой стенд выбрать
 
-| Критерий | Namespace | VMware | Physical |
-|----------|-----------|--------|----------|
-| **Время развёртывания** | 5 секунд | 30 минут | часы/дни |
-| **Потребление RAM** | 0 | ~3 GB | N/A |
-| **Изоляция ядер** | Нет (общее ядро) | Да (отдельные ядра) | Да |
-| **Реальный NIC** | Нет (veth) | Нет (vmxnet3) | Да |
-| **BBR vs CUBIC одновременно** | Нет | Да | Да |
-| **tc netem** | Да | Да | Да |
-| **eBPF** | Да | Да | Да |
-| **DPDK / XDP** | Нет | Нет | Да |
-| **Микроберсты** | Нет | Нет | Да |
-| **Покрытие лабораторных** | ~70% | ~90% | 100% |
+| Критерий | Namespace | VMware | MikroTik + ноутбуки | Physical 10G |
+|----------|-----------|--------|---------------------|--------------|
+| **Время развёртывания** | 5 секунд | 30 минут | 1–2 часа | часы/дни |
+| **Потребление RAM** | 0 | ~3 GB | N/A (отдельные машины) | N/A |
+| **Изоляция ядер** | Нет (общее ядро) | Да (отдельные ядра) | Да (отдельные машины) | Да |
+| **Реальный NIC** | Нет (veth) | Нет (vmxnet3) | Да (GbE) | Да (10G+) |
+| **Реальные задержки** | Нет (~0.02ms) | Нет (~0.02ms) | Да (0.5–1.5ms) | Да |
+| **BBR vs CUBIC одновременно** | Нет | Да | Да | Да |
+| **tc netem** | Да | Да | Частично (Linux-ноутбуки) | Да |
+| **HW traffic shaping** | Нет | Нет | Да (MikroTik Queue) | Да |
+| **VLAN на железе** | Нет | Нет | Да (CRS326) | Да |
+| **Port mirroring** | Нет | Нет | Да (CRS326) | Да |
+| **eBPF** | Да | Да | Частично (4GB RAM) | Да |
+| **DPDK / XDP** | Нет | Нет | Нет | Да |
+| **Микроберсты** | Нет | Нет | Частично (GbE) | Да |
+| **Покрытие лабораторных** | ~70% | ~90% | ~85% | 100% |
 
-**Начинайте с Уровня 2 (VMware).** Он покрывает подавляющее большинство лабораторных, даёт полную изоляцию ядер и позволяет безопасно экспериментировать с `tc`, `sysctl` и eBPF, не рискуя повесить рабочую машину.
+**Рекомендация по выбору:**
 
-Уровень 1 (Namespace) держите под рукой для быстрых проверок --- когда нужно за 10 секунд проверить гипотезу.
+- **Уровень 1 (Namespace)** — держите под рукой для быстрых проверок. За 10 секунд разворачиваете стенд, проверяете гипотезу, удаляете.
 
-Уровень 3 (физический) --- когда дойдёте до модулей с DPDK/XDP или когда результаты виртуалки начнут расходиться с продакшеном.
+- **Уровень 2 (VMware)** — покрывает подавляющее большинство лабораторных, даёт полную изоляцию ядер и позволяет безопасно экспериментировать с `tc`, `sysctl` и eBPF, не рискуя повесить рабочую машину.
+
+- **Уровень 2.5 (MikroTik + ноутбуки)** — если оборудование уже есть, используйте его **параллельно с VMware**. MikroTik даёт то, чего нет в виртуалке: реальные очереди, реальные задержки, port mirroring, VLAN на железе, traffic shaping продакшен-уровня. Идеально для понимания, как TCP ведёт себя в настоящей сети. Для `tc netem`-экспериментов запускайте namespace (Уровень 1) на Ubuntu-ноутбуке.
+
+- **Уровень 3 (Physical 10G)** — когда дойдёте до модулей с DPDK/XDP или когда результаты виртуалки начнут расходиться с продакшеном.
