@@ -49,6 +49,30 @@
           └───────────┘    timeout         └───────────┘
 ```
 
+```mermaid
+stateDiagram-v2
+    [*] --> CLOSED
+    CLOSED --> LISTEN : Passive Open
+    CLOSED --> SYN_SENT : Active Open
+    
+    LISTEN --> SYN_RCVD : Recv SYN / Send SYN+ACK
+    SYN_SENT --> ESTABLISHED : Recv SYN+ACK / Send ACK
+    SYN_RCVD --> ESTABLISHED : Recv ACK
+    
+    ESTABLISHED --> FIN_WAIT_1 : Close / Send FIN
+    ESTABLISHED --> CLOSE_WAIT : Recv FIN / Send ACK
+    
+    FIN_WAIT_1 --> FIN_WAIT_2 : Recv ACK
+    FIN_WAIT_1 --> CLOSING : Recv FIN+ACK / Send ACK
+    CLOSING --> TIME_WAIT : Recv ACK
+    
+    FIN_WAIT_2 --> TIME_WAIT : Recv FIN / Send ACK
+    CLOSE_WAIT --> LAST_ACK : Close / Send FIN
+    LAST_ACK --> CLOSED : Recv ACK
+    
+    TIME_WAIT --> CLOSED : 2MSL timeout
+```
+
 Каждое состояние — это конкретное поле в структуре `struct sock` в ядре:
 
 ```c
@@ -423,6 +447,33 @@ RACK включён по умолчанию в современных ядрах
   │  CLOSED                            │
 ```
 
+```mermaid
+sequenceDiagram
+    participant C as Клиент
+    participant S as Сервер
+
+    Note over C, S: ESTABLISHED
+    
+    C->>S: FIN (seq=X)
+    Note over C: FIN_WAIT_1
+    S-->>C: ACK (ack=X+1)
+    Note over S: CLOSE_WAIT
+    Note over C: FIN_WAIT_2
+    
+    rect rgb(240, 240, 240)
+    Note over S: Сервер продолжает<br/>отправку данных (если есть)
+    end
+    
+    S->>C: FIN (seq=Y)
+    Note over S: LAST_ACK
+    
+    C->>S: ACK (ack=Y+1)
+    Note over C: TIME_WAIT (2MSL)
+    Note over S: CLOSED
+    
+    Note over C: CLOSED (после тайм-аута)
+```
+
 ### CLOSE_WAIT: Ваш код сломан
 
 CLOSE_WAIT означает: **другая сторона закрыла соединение (послала FIN), но ваше приложение не вызвало `close()`**. Это **всегда** баг в приложении — утечка сокетов.
@@ -774,6 +825,29 @@ iperf3 -c 192.168.50.10 -t 30
   │  ── HTTP GET (encrypted) ─────────────→│  RTT 4 (первый запрос!)
 ```
 
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as Клиент
+    participant S as Сервер
+
+    Note over C, S: RTT 1: TCP Handshake
+    C->>S: TCP SYN
+    S-->>C: TCP SYN-ACK
+    C->>S: TCP ACK
+
+    Note over C, S: RTT 2: TLS Handshake (Part 1)
+    C->>S: ClientHello
+    S-->>C: ServerHello, Certificate, ServerKeyExchange, ServerHelloDone
+
+    Note over C, S: RTT 3: TLS Handshake (Part 2)
+    C->>S: ClientKeyExchange, ChangeCipherSpec, Finished
+    S-->>C: ChangeCipherSpec, Finished
+
+    Note over C, S: RTT 4: Application Data
+    C->>S: HTTP GET (encrypted)
+    S-->>C: HTTP Response (encrypted)
+```
 **Итого:** 3 RTT до первого байта данных (1 TCP + 2 TLS). При RTT = 100ms — 300ms ожидания.
 
 ### TLS 1.3 — 1 дополнительный RTT
@@ -794,6 +868,26 @@ iperf3 -c 192.168.50.10 -t 30
   │  ── HTTP GET (encrypted) ─────────────→ │  RTT 3 (первый запрос)
 ```
 
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as Клиент
+    participant S as Сервер
+
+    Note over C, S: RTT 1: TCP Handshake
+    C->>S: TCP SYN
+    S-->>C: TCP SYN-ACK
+    C->>S: TCP ACK
+
+    Note over C, S: RTT 2: TLS 1.3 Handshake
+    C->>S: ClientHello + KeyShare
+    S-->>C: ServerHello + KeyShare, EncryptedExtensions, Certificate, Finished
+    C->>S: Finished
+
+    Note over C, S: RTT 3: Application Data
+    C->>S: HTTP GET (encrypted)
+    S-->>C: HTTP Response (encrypted)
+```
 **Итого:** 2 RTT до первого байта данных (1 TCP + 1 TLS). Ключевая оптимизация: клиент отправляет `KeyShare` уже в `ClientHello`, сервер может сразу вычислить общий секрет.
 
 ### TLS 1.3 0-RTT (Early Data)
@@ -813,6 +907,23 @@ iperf3 -c 192.168.50.10 -t 30
   │     + HTTP Response ──────────────────  │
 ```
 
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as Клиент
+    participant S as Сервер
+
+    Note over C, S: RTT 1: TCP Handshake
+    C->>S: TCP SYN
+    S-->>C: TCP SYN-ACK
+    C->>S: TCP ACK
+
+    Note over C, S: RTT 2: TLS 1.3 0-RTT
+    C->>S: ClientHello + KeyShare + Early Data (HTTP GET)
+    S-->>C: ServerHello + EncryptedExtensions + Finished + HTTP Response
+
+    Note over C, S: Соединение установлено
+```
 **Итого:** 1 RTT до первого байта данных. Клиент отправляет зашифрованный HTTP-запрос **вместе с ClientHello**, используя PSK (Pre-Shared Key) из предыдущей сессии.
 
 **Опасность 0-RTT:** Early Data не защищена от replay-атак. Сервер не может гарантировать, что запрос не был перехвачен и воспроизведён. Поэтому 0-RTT безопасен **только для идемпотентных запросов** (GET, HEAD). Никогда — для POST с side effects.
@@ -829,6 +940,18 @@ iperf3 -c 192.168.50.10 -t 30
   │     + HTTP Response ──────────────────  │
 ```
 
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as Клиент
+    participant S as Сервер
+
+    Note over C, S: 1 RTT: TCP Fast Open + TLS 0-RTT
+    C->>S: SYN + TFO Cookie + ClientHello + KeyShare + Early Data (HTTP GET)
+    S-->>C: SYN-ACK + ServerHello + Finished + HTTP Response
+
+    Note over C, S: Соединение установлено (данные получены)
+```
 Комбинация TCP Fast Open (часть 3.3) и TLS 1.3 0-RTT позволяет отправить HTTP-запрос **в первом же SYN-пакете**. Реальный 0-RTT.
 
 ### kTLS — шифрование в ядре

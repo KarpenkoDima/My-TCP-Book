@@ -1,0 +1,40 @@
+site_name: Полное руководство по TCP
+site_description: От физического уровня до современных алгоритмов (CUBIC, BBR) и QUIC.
+theme:
+  name: material
+
+  palette:
+    primary: indigo
+    accent: deep purple
+  features:
+    - navigation.tabs # Верхние вкладки
+    - navigation.sections # Сворачиваемые разделы
+markdown_extensions:
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+extra_javascript:
+  - https://unpkg.com/mermaid/dist/mermaid.min.js
+  - assets/javascripts/mermaid.js
+nav:
+  - Главная: index.md
+  - Теория сетей:
+    - Модуль 1. Физический уровень и ядро: modules/Module-01-Physical-Layer-and-Kernel.md
+    - Модуль 2. Управление заторами: modules/Module-02-IP-Protocol.md
+    - Модуль 3. Машина состояний TCP: modules/Module-03-TCP-State-Machine.md
+    - Механизмы TCP (Sliding Window, SACK): modules/supernew-tcp_complete_guide.md
+  - Практика и Тюнинг:
+    - Модуль 4. Диагностика и тюнинг: modules/Module-04-Congestion-Control.md
+    - Лабораторный стенд: modules/Lab-Setup.md
+    - Практика. Custom Reliable UDP Protocol: modules/Practiec-Custom-Reliable-UDP-Protocol
+  - Архитектура:
+    - Модуль 5. Протокол IP: modules/Module-05-Traffic-Control-Tuning-Diagnostics.md
+    - Модуль 6. Архитектура приложений: modules/Module-06-Application-Architecture.md
+    - Модуль 7. QUIC и HTTP/3: modules/Module-07-QUIC-HTTP3.md
+  - Windows Networ:
+    - Модуль 8. Windows Network Stack: modules/Module-08-Windows-Network-Stack.md
+    - Модуль 9. Windows Client Network Internals — Wi-Fi, DNS Client, VPN и «Нет интернета»: modules/Module-09-Windows-Client-Networking.md
+  - EVE-NG-Lab:
+    - Модуль 10. EVE-NG Lab — Боевой полигон для .NET и Chaos Engineering: modules/Module-10-EVE-NG-Lab.md
