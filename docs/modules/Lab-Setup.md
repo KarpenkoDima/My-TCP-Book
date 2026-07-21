@@ -329,8 +329,8 @@ done
                         VMware Workstation / Player
   ┌─────────────────────────────────────────────────────────────────────┐
   │                                                                     │
-  │  ┌──────────┐     LAN Segment 1      ┌──────────┐     LAN Segment 2      ┌──────────┐
-  │  │  Client   │   Link_Client_Router   │  Router   │   Link_Router_Server   │  Server   │
+  │  ┌──────────┐     LAN Segment 1       ┌──────────┐     LAN Segment 2       ┌──────────┐
+  │  │  Client  │   Link_Client_Router    │  Router  │   Link_Router_Server    │  Server  │
   │  │          │                         │          │                         │          │
   │  │   ens33 ─┼─────────────────────────┼─ ens34   │                         │          │
   │  │ .60.10   │                         │ .60.1    │                         │          │
