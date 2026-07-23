@@ -32,7 +32,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\TcpOutOfOrderReassembly\TcpOutOfOrderReassembly.csproj" />
+    <ProjectReference Include="..\..\src\TcpOutOfOrderReassembly\TcpOutOfOrderReassembly.csproj" />
   </ItemGroup>
 
 </Project>

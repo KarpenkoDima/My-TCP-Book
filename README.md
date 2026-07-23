@@ -215,6 +215,40 @@
 
 ---
 
+## Практические проекты и код
+
+Каждый модуль, где это применимо, заканчивается разделом "Практический
+проект" — рабочей C#/.NET 9 реализацией разобранного механизма. Весь код
+лежит в `src/`, тесты — в `tests/`:
+
+```text
+src/
+├── TcpSlidingWindow/         — Модуль 3, 3.4.4 (send-side sliding window)
+├── TcpOutOfOrderReassembly/  — Модуль 3, 3.4.10 (out-of-order reassembly)
+└── TcpReceivePipeline/       — Модуль 3, 3.7.2 (Delayed ACK + RTO) и
+                                  Модуль 4, 4.11 (Congestion Control) —
+                                  один и тот же проект: CongestionController
+                                  физически присутствует с самого начала,
+                                  но не используется до главы 4.11
+                                  (подробности — в самой главе 3.7.2)
+
+tests/
+└── TcpOutOfOrderReassembly.Tests/  — 20 xUnit-тестов на TcpStreamReassembler
+```
+
+Сборка и запуск:
+
+```bash
+dotnet run --project src/TcpSlidingWindow
+dotnet run --project src/TcpOutOfOrderReassembly
+dotnet run --project src/TcpReceivePipeline
+dotnet test tests/TcpOutOfOrderReassembly.Tests
+```
+
+Требуется .NET SDK 9 или новее.
+
+---
+
 ## Требования
 
 - **Linux labs:** Ubuntu 22.04+, root-доступ, ядро 5.15+
