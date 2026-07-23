@@ -1,28 +1,4 @@
-# Welcome to MkDocs
-
-For full documentation visit [mkdocs.org](https://www.mkdocs.org).
-
-## Commands
-
-* `mkdocs new [dir-name]` - Create a new project.
-* `mkdocs serve` - Start the live-reloading docs server.
-* `mkdocs build` - Build the documentation site.
-* `mkdocs -h` - Print help message and exit.
-
-## Project layout
-
-```plaintext
-   tcp-mastery/
-		├── mkdocs.yml        # Файл настроек книги
-		├── docs/             # Папка для всех текстов и визуализаций
-		│   ├── index.md      # Главная страница
-		│   ├── modules/      # Сюда положим ваши главы (Module-01, Module-02...)
-		│   ├── demos/        # Сюда положим HTML-файлы (tcp_mechanisms_summary.html)
-		│   └── images/       # Сюда положим картинки (.png, .svg)
-		├── src/              # Папка для C# кода
-		└── tests/            # Папка для C# тестов
-		# TCP/IP & Network Engineering — Deep Dive Book
-```
+# TCP/IP & Network Engineering — Deep Dive Book
 
 *От физики сетевой карты до QUIC. От ядра Linux до Windows Internals. Для тех, кому мало «просто работает».*
 
