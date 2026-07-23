@@ -1148,8 +1148,9 @@ Invoke-NetworkStackAudit -AdapterName "Ethernet0"
 5. Проверьте: переключилась ли VM обратно на VF после миграции?
 
 ---
-
+## Связь с другими модулями
 **Связь с основной книгой:**
+
 - RSS в Windows ≈ RSS/RPS в Linux (Модуль 1)
 - WFP ≈ iptables/nftables + netfilter (Модуль 2, IP)
 - TCP settings ≈ sysctl tuning (Модуль 5, TC/Tuning)

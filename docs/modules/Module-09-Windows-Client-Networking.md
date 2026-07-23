@@ -1386,6 +1386,8 @@ Invoke-ClientNetworkDiag
 
 ---
 
+## Связь с другими модулями
+
 **Связь с модулями книги:**
 - Wi-Fi Power Management ≈ NIC power states (Модуль 1)
 - DNS resolution path ≈ IP routing decision (Модуль 2)

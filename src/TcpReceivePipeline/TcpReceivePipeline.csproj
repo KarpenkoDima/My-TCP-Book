@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>TcpReceivePipeline</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Учебные снапшоты предыдущих этапов сохраняются как исходный текст,
+         но исключены из компиляции: каждый содержит собственный Main(). -->
+    <Compile Remove="Host/Program.WindowAndReassembly.cs" />
+    <Compile Remove="Host/Program.DelayedAckAndRto.cs" />
+    <None Include="Host/Program.WindowAndReassembly.cs" />
+    <None Include="Host/Program.DelayedAckAndRto.cs" />
+  </ItemGroup>
+</Project>
