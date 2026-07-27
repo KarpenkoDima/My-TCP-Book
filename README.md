@@ -14,3 +14,14 @@
 - Как CrowdStrike Falcon может удвоить p99 latency на SQL Server
 - Почему Windows говорит «Нет интернета» при работающем VPN (NCSI + NLA)
 - Как написать zero-copy proxy на io_uring и почему sendfile() бесполезен для HTTPS (без kTLS)
+- Как работает TCP-стек изнутри — zero-alloc парсинг, скользящее окно, реассемблер, Delayed ACK, RTO, Congestion Control на C#
+
+## Структура
+
+- **Часть I** (Модули 1-5): Linux Network Stack — от провода до сокета
+- **Часть II** (Модули 6-7): Прикладной уровень и QUIC
+- **Часть III** (Модули 8-9): Windows Network Internals
+- **Часть IV** (Модуль 10): Лаборатории и Chaos Engineering
+- **Часть V** (Модули 11-13): TCP на практике — собираем свой стек на C# (`src/`)
+
+Подробное оглавление — в [`docs/index.md`](docs/index.md).

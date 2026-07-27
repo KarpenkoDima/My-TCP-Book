@@ -222,6 +222,57 @@ For full documentation visit [mkdocs.org](https://www.mkdocs.org).
 #### [Практика. Custom Reliable UDP Protocol:] (modules/Practiec-Custom-Reliable-UDP-Protocol.md)
 ---
 
+### Часть V: TCP на практике — собираем свой стек на C#
+
+#### [Модуль 11: Sliding Window — реализация на C#](modules/Module-11-Sliding-Window-Implementation.md)
+*«Zero-alloc парсинг, модулярная арифметика, скользящее окно»*
+
+- 11.1 Введение в Часть V — зачем писать свой TCP-стек
+- 11.2 SequenceMath — арифметика по модулю 2³² (RFC 9293 §3.4)
+- 11.3 TcpFlags — [Flags] enum на уровне провода
+- 11.4 TcpSegment — readonly ref struct, zero-alloc разбор
+- 11.5 TcpHeaderParser — BinaryPrimitives big-endian
+- 11.6 SyntheticSegmentWriter — сборка сегментов для теста
+- 11.7 SlidingWindowTracker — SND.UNA/NXT/WND + RCV.NXT/WND
+- 11.8 Program.cs — трассировка 20-байтной передачи
+- 11.9 Production Corner — Linux tcp_sock, Window Scaling
+
+---
+
+#### [Модуль 12: Out-of-Order Reassembly](modules/Module-12-Out-of-Order-Reassembly.md)
+*«Буферизация, перекрытия, 64-bit unwrapping, ArrayPool»*
+
+- 12.1 Зачем нужен реассемблер
+- 12.2 TcpSequence — 64-bit unwrapping для корректного Distance()
+- 12.3 BufferedSegment — [Start, End), ArrayPool rental
+- 12.4 TcpStreamReassembler — InsertOnlyNewRanges, DrainContiguousData
+- 12.5 Три сценария: reorder, overlap, wraparound
+- 12.6 Reentrancy guard и DoS-защита (maxBufferedRanges)
+- 12.7 Production Corner — Linux rb_root, SACK, DSACK, RACK, PAWS
+- 12.8 Эволюционная карта V1→V7
+
+---
+
+#### [Модуль 13: TCP Receive Pipeline](modules/Module-13-TCP-Receive-Pipeline.md)
+*«От компонентов к полному конвейеру: Delayed ACK, RTO, Congestion Control»*
+
+- 13.1 Архитектура полного Pipeline
+- 13.2 Разделение SlidingWindowTracker → TcpSendWindow + TcpReceiveEndpoint
+- 13.3 Виртуальное время (PriorityQueue как очередь событий)
+- 13.4 Generation-счётчик: отмена таймеров без удаления из очереди
+- 13.5 InFlightSegment — что живёт в полёте
+- 13.6 RetransmissionTimer — RFC 6298 (Jacobson/Karn)
+- 13.7 RetransmissionController — очередь неподтверждённых сегментов
+- 13.8 DelayedAckPolicy — RFC 1122
+- 13.9 CongestionController — RFC 5681
+- 13.10 Прогон 1: Delayed ACK и Fast Retransmit (без cwnd)
+- 13.11 Прогон 2: Congestion Control
+- 13.12 Две ошибки, найденные трассировкой
+- 13.13 Production Corner
+- 13.14 Эволюционная карта: от учебного стека к production
+
+---
+
 ## Как читать
 
 **Путь пакета (последовательно):**
@@ -235,6 +286,9 @@ For full documentation visit [mkdocs.org](https://www.mkdocs.org).
 
 **Путь DevOps/SRE:**
 `Модуль 10 (EVE-NG Lab) → 5 (TC/Tuning) → 1 (eBPF) → 4 (BBR)`
+
+**Путь C#-разработчика (собираем TCP-стек):**
+`Модуль 11 (Sliding Window) → 12 (Reassembly) → 13 (Pipeline) → 3 (State Machine) → 4 (CC)`
 
 ---
 
